@@ -1,0 +1,1438 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Abdulazeez Virtual LINAC — interactive 3D linear accelerator dosimetry simulator (6 MV / 10 MV, water phantom, ion chamber).">
+<style>:root{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+</head>
+<body>
+<title>Abdulazeez Virtual LINAC</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+/* Layout: one-screen control-room app — 3D treatment room on the left, the physicist's instrument panel on the right.
+   A single committed dark "bunker" look: graphite neutrals tinted toward the teal console accent, amber field labels. */
+:root {
+  color-scheme: dark;
+  --bg: #0e1316; --bg2: #131a1e; --panel: #182126; --panel2: #1f2a30; --raise: #26333a;
+  --line: #2c3a41; --line2: #3a4b54;
+  --fg: #e6eef0; --muted: #94a7ae; --dim: #6a7e86;
+  --teal: #38c4b6; --teal-d: #1c7f76; --amber: #f0bf4c; --beam: #ffd86b;
+  --red: #ff5a4c; --green: #3fdc8a; --blue: #5aa9ff; --violet: #b58cff;
+  --f-ui: "Barlow Semi Condensed", "Arial Narrow", Arial, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  --r: 6px;
+}
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.4 var(--f-ui); -webkit-font-smoothing: antialiased; }
+* { box-sizing: border-box; }
+button, input, select { font: inherit; color: inherit; }
+.mono { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+
+.app { height: 100%; display: grid; grid-template-rows: auto 1fr; }
+.topbar { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; padding-block: 8px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: var(--bg2); border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 10px; margin-right: auto; }
+.brand .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; flex: none; box-shadow: 0 0 0 2px var(--teal), 0 0 14px #38c4b655; }
+.brand b em { font-style: normal; color: var(--teal); }
+.brand b { font-size: 19px; letter-spacing: .06em; font-weight: 700; }
+.brand span { display: block; font-size: 12px; color: var(--muted); letter-spacing: .04em; }
+.lamps { display: flex; gap: 14px; flex-wrap: wrap; }
+.lamp { display: flex; align-items: center; gap: 7px; font-size: 12px; letter-spacing: .1em; color: var(--muted); text-transform: uppercase; }
+.lamp i { width: 11px; height: 11px; border-radius: 50%; background: #2b3438; box-shadow: inset 0 0 0 1px #0006; }
+.lamp.on.red i { background: var(--red); box-shadow: 0 0 10px var(--red); }
+.lamp.on.green i { background: var(--green); box-shadow: 0 0 8px #3fdc8a99; }
+.lamp.on.amber i { background: var(--amber); box-shadow: 0 0 8px #f0bf4c99; }
+.lamp.on { color: var(--fg); }
+
+.layout { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(400px, 37%); }
+.stage { position: relative; min-height: 0; background: radial-gradient(120% 90% at 50% 20%, #1e282d 0%, #0d1215 70%); overflow: hidden; }
+#gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+#gl:active { cursor: grabbing; }
+.hud { position: absolute; left: 14px; top: 14px; background: #0c1114cc; border: 1px solid var(--line); border-radius: var(--r);
+  padding: 10px 12px; display: grid; grid-template-columns: auto auto; gap: 2px 14px; font-size: 13px; backdrop-filter: blur(4px); pointer-events: none; }
+.hud dt { color: var(--amber); letter-spacing: .05em; }
+.hud dd { margin: 0; font-family: var(--f-mono); text-align: right; font-variant-numeric: tabular-nums; }
+.views { position: absolute; right: 14px; top: 14px; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; max-width: 60%; }
+.chip { border: 1px solid var(--line2); background: #0c1114cc; color: var(--muted); padding: 5px 10px; border-radius: 999px; font-size: 13px; cursor: pointer; letter-spacing: .03em; }
+.chip:hover { color: var(--fg); border-color: var(--teal-d); }
+.chip.active { color: #071615; background: var(--teal); border-color: var(--teal); font-weight: 600; }
+.toggles { position: absolute; left: 14px; bottom: 14px; display: flex; gap: 6px; flex-wrap: wrap; max-width: 70%; }
+.beambar { position: absolute; right: 14px; bottom: 14px; width: min(320px, 60%); background: #0c1114d9; border: 1px solid var(--line);
+  border-radius: var(--r); padding: 8px 12px; font-size: 13px; }
+.beambar .row { display: flex; justify-content: space-between; align-items: baseline; }
+.beambar .lbl { color: var(--amber); letter-spacing: .08em; }
+.meter { height: 6px; border-radius: 3px; background: #26323a; margin-top: 6px; overflow: hidden; }
+.meter i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #ffbb4a, var(--beam)); transition: width .08s linear; }
+.beam-on .beambar { border-color: var(--red); box-shadow: 0 0 0 1px #ff5a4c55, 0 0 24px #ff5a4c33; }
+.toast { position: absolute; left: 50%; top: 16px; transform: translateX(-50%); background: #3b1714f2; border: 1px solid var(--red); color: #ffd9d4;
+  padding: 8px 14px; border-radius: var(--r); font-size: 14px; max-width: min(520px, 90%); text-align: center; opacity: 0; transition: opacity .2s; pointer-events: none; }
+.toast.show { opacity: 1; }
+.toast.ok { background: #0f2e25f2; border-color: var(--green); color: #d4ffe9; }
+
+.panel { min-height: 0; display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--line); }
+.tabs { display: flex; gap: 2px; padding: 8px 10px 0; background: var(--bg2); border-bottom: 1px solid var(--line); overflow-x: auto; }
+.tab { border: 0; background: transparent; color: var(--muted); padding: 9px 13px 10px; font-size: 15px; letter-spacing: .03em; cursor: pointer;
+  border-radius: var(--r) var(--r) 0 0; white-space: nowrap; font-weight: 500; }
+.tab:hover { color: var(--fg); }
+.tab[aria-selected="true"] { color: #071615; background: var(--teal); font-weight: 700; }
+.pages { flex: 1; min-height: 0; overflow-y: auto; }
+.page { padding: 16px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 14px; }
+.page h2 { margin: 0; font-size: 20px; letter-spacing: .02em; text-wrap: balance; }
+.page h2 small { display: block; font-size: 13px; color: var(--muted); font-weight: 400; letter-spacing: 0; margin-top: 2px; }
+.card { background: var(--panel2); border: 1px solid var(--line); border-radius: var(--r); padding: 12px; display: grid; gap: 10px; min-width: 0; }
+.card h3 { margin: 0; font-size: 15px; color: var(--amber); letter-spacing: .06em; text-transform: uppercase; font-weight: 600; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 12px; }
+.field { display: grid; gap: 4px; min-width: 0; }
+.field label, .lab { font-size: 13px; color: var(--amber); letter-spacing: .04em; }
+.field input, .field select { width: 100%; background: #0f1619; border: 1px solid var(--line2); border-radius: 4px; padding: 7px 9px;
+  font-family: var(--f-mono); font-size: 14px; font-variant-numeric: tabular-nums; }
+.field input:disabled, .field select:disabled { color: var(--dim); background: #141c20; }
+.field input:focus-visible, .field select:focus-visible, button:focus-visible, .tab:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
+.hint { font-size: 12.5px; color: var(--muted); }
+.presets { display: flex; flex-wrap: wrap; gap: 5px; }
+.presets .chip { background: #0f1619; padding: 3px 9px; font-size: 12.5px; font-family: var(--f-mono); }
+.presets .chip.active { background: var(--teal); color: #061614; border-color: var(--teal); }
+.btns { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn { border: 1px solid var(--line2); background: var(--raise); padding: 8px 14px; border-radius: 4px; cursor: pointer; font-weight: 600; letter-spacing: .03em; }
+.btn:hover { border-color: var(--teal-d); }
+.btn.primary { background: var(--teal); color: #061614; border-color: var(--teal); }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.beam { background: #3a1512; border-color: var(--red); color: #ffd8d3; }
+.btn.beam:hover { background: #4b1a16; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.sm { padding: 5px 10px; font-size: 13px; }
+.readout { background: #081012; border: 1px solid #1d3a36; border-radius: var(--r); padding: 12px 14px; display: grid; gap: 2px; }
+.readout .big { font-family: var(--f-mono); font-size: 40px; font-weight: 700; color: #7dfbe9; letter-spacing: .02em; font-variant-numeric: tabular-nums; line-height: 1.1; text-shadow: 0 0 14px #38c4b644; }
+.readout .big small { font-size: 18px; color: var(--muted); font-weight: 400; margin-left: 6px; }
+.readout .sub { font-family: var(--f-mono); font-size: 13px; color: var(--muted); }
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.stat { background: #10181b; border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; }
+.stat b { display: block; font-family: var(--f-mono); font-size: 16px; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 12px; color: var(--muted); letter-spacing: .04em; }
+.tablewrap { overflow-x: auto; max-height: 280px; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+th, td { padding: 5px 7px; text-align: right; border-bottom: 1px solid #26333a; white-space: nowrap; }
+th { position: sticky; top: 0; background: #22303a; color: var(--amber); font-weight: 600; letter-spacing: .03em; z-index: 1; }
+td { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+th:first-child, td:first-child { text-align: left; }
+td.good { color: var(--green); } td.warn { color: var(--amber); } td.bad { color: var(--red); }
+tr.hl td { background: #1b3330; }
+.chartbox { position: relative; height: 300px; background: #0b1114; border: 1px solid var(--line); border-radius: 4px; padding: 6px; }
+.chartbox.sm { height: 220px; }
+.radio { display: flex; gap: 6px; align-items: center; font-size: 14px; color: var(--amber); cursor: pointer; }
+.radio input { accent-color: var(--teal); }
+.check { display: flex; gap: 8px; align-items: center; font-size: 14px; cursor: pointer; }
+.check input { accent-color: var(--teal); width: 16px; height: 16px; }
+.seg { display: inline-flex; border: 1px solid var(--line2); border-radius: 4px; overflow: hidden; }
+.seg button { border: 0; background: #0f1619; padding: 6px 12px; cursor: pointer; color: var(--muted); }
+.seg button.on { background: var(--teal); color: #061614; font-weight: 700; }
+.task { border: 1px solid var(--line); border-radius: var(--r); background: var(--panel2); }
+.task > summary { list-style: none; cursor: pointer; padding: 11px 12px; display: flex; gap: 10px; align-items: center; }
+.task > summary::-webkit-details-marker { display: none; }
+.task > summary .num { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--raise); font-weight: 700; color: var(--amber); flex: none; }
+.task > summary .t { font-weight: 600; font-size: 16px; }
+.task > summary .s { font-size: 13px; color: var(--muted); }
+.task > summary .state { margin-left: auto; font-size: 12px; letter-spacing: .08em; color: var(--dim); text-transform: uppercase; }
+.task.done > summary .num { background: var(--green); color: #052313; }
+.task.done > summary .state { color: var(--green); }
+.task[open] > summary { border-bottom: 1px solid var(--line); }
+.task .body { padding: 12px; display: grid; gap: 10px; }
+.pill { display: inline-block; font-family: var(--f-mono); font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #0f1619; border: 1px solid var(--line2); color: var(--muted); }
+.kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; font-size: 14px; }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; font-family: var(--f-mono); text-align: right; font-variant-numeric: tabular-nums; }
+.kv dd.em { color: #7dfbe9; font-weight: 700; }
+.note { font-size: 13px; color: var(--muted); border-left: 3px solid var(--amber); padding: 6px 10px; background: #1c2226; border-radius: 0 4px 4px 0; }
+.note.red { border-color: var(--red); }
+.note.teal { border-color: var(--teal); }
+.lcd { background: #0b1a10; border: 2px solid #23402c; border-radius: 6px; padding: 10px 14px; font-family: var(--f-mono); color: #9dffb8; display: grid; gap: 2px; }
+.lcd .v { font-size: 34px; font-weight: 700; letter-spacing: .04em; font-variant-numeric: tabular-nums; text-shadow: 0 0 10px #9dffb855; }
+.lcd .m { font-size: 12px; color: #5fae78; letter-spacing: .08em; }
+.console { width: 100%; font-size: 14px; }
+.console td { padding: 4px 6px; }
+.console td:first-child { font-family: var(--f-ui); color: var(--fg); }
+.console input { width: 92px; background: #0f1619; border: 1px solid var(--line2); border-radius: 3px; padding: 4px 6px; font-family: var(--f-mono); text-align: right; }
+.console .act { color: var(--muted); }
+.statusbar { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; font-size: 13px; }
+.statusbar div { padding: 5px 8px; border-radius: 3px; }
+.st-amber { background: #4a3413; color: #ffd38a; } .st-green { background: #123b26; color: #9ff3c4; } .st-red { background: #4a1714; color: #ffb3aa; }
+.foot { font-size: 12px; color: var(--dim); padding: 4px 16px 14px; }
+@media (max-width: 980px) {
+  html, body { height: auto; }
+  .app { height: auto; display: block; }
+  .layout { display: block; }
+  .stage { height: 62vh; min-height: 360px; }
+  .panel { border-left: 0; border-top: 1px solid var(--line); }
+  .pages { overflow: visible; }
+  .hud { font-size: 12px; padding: 7px 9px; }
+  .beambar { width: min(260px, 55%); }
+}
+@media (max-width: 600px) {
+  .hud { display: none; }
+  .beambar { width: 190px; font-size: 12px; padding: 6px 9px; }
+  #doseRate { display: none; }
+  .views { max-width: 70%; }
+}
+@media (max-width: 520px) {
+  .grid3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .views { max-width: 50%; }
+  .readout .big { font-size: 32px; }
+  .stage { height: 56vh; }
+  .toggles { max-width: 45%; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <img class="avatar" src="data:image/jpeg;base64,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" alt="Abdulazeez" width="40" height="40">
+      <div><b>ABDULAZEEZ <em>VIRTUAL LINAC</em></b><span>Dosimetry simulator · 6 MV &amp; 10 MV · water phantom · ion chamber</span></div>
+    </div>
+    <div class="lamps">
+      <div class="lamp" id="lampBeam"><i></i>Beam on</div>
+      <div class="lamp" id="lampLock"><i></i><span id="lockTxt">Interlocks</span></div>
+      <div class="lamp on green" id="lampDoor"><i></i>Room door closed</div>
+    </div>
+  </header>
+  <main class="layout">
+    <section class="stage" id="stage" aria-label="3D treatment room">
+      <canvas id="gl"></canvas>
+      <dl class="hud" id="hud">
+        <dt>Energy</dt><dd id="hEnergy">6 MV</dd>
+        <dt>Gantry</dt><dd id="hGantry">0.0°</dd>
+        <dt>Collimator</dt><dd id="hColl">0.0°</dd>
+        <dt>Couch</dt><dd id="hCouch">0.0°</dd>
+        <dt>Field (iso)</dt><dd id="hField">10.0 × 10.0 cm</dd>
+        <dt>SSD (ODI)</dt><dd id="hSSD">95.0 cm</dd>
+        <dt>Chamber depth</dt><dd id="hDepth">5.0 cm</dd>
+        <dt>Source → chamber</dt><dd id="hSCD">100.0 cm</dd>
+      </dl>
+      <div class="views" id="views">
+        <button class="chip active" data-view="room">Room</button>
+        <button class="chip" data-view="side">Side</button>
+        <button class="chip" data-view="front">Couch end</button>
+        <button class="chip" data-view="close">Phantom</button>
+        <button class="chip" data-view="bev">Beam's eye</button>
+      </div>
+      <div class="toggles">
+        <button class="chip active" id="tWash" aria-pressed="true">Dose wash</button>
+        <button class="chip active" id="tLaser" aria-pressed="true">Lasers</button>
+        <button class="chip active" id="tLight" aria-pressed="true">Light field</button>
+      </div>
+      <div class="beambar">
+        <div class="row"><span class="lbl">MONITOR UNITS</span><span class="mono"><b id="muNow">0</b> / <span id="muSet">100</span> MU</span></div>
+        <div class="meter"><i id="muBar"></i></div>
+        <div class="row" style="margin-top:4px"><span class="hint" id="beamMsg">Ready — press Beam On</span><span class="mono hint" id="doseRate">600 MU/min</span></div>
+      </div>
+      <div class="toast" id="toast" role="status"></div>
+    </section>
+
+    <aside class="panel">
+      <nav class="tabs" role="tablist">
+        <button class="tab" role="tab" aria-selected="true" data-tab="chamber">Chamber</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="scanner">Scanner</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="tasks">Lab Tasks</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="elec">Electrometer</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="linac">Linac</button>
+      </nav>
+      <div class="pages">
+
+        <!-- ION CHAMBER -->
+        <section class="page" data-page="chamber">
+          <h2>Point dose measurement<small>Set up the beam, place the chamber, deliver 100 MU and read the dose — exactly the lab workflow.</small></h2>
+          <div class="card">
+            <h3>Beam &amp; geometry</h3>
+            <div class="grid2">
+              <div class="field"><label for="cEnergy">Beam energy</label><select id="cEnergy"><option value="6MV">6 MV</option><option value="10MV">10 MV</option></select></div>
+              <div class="field"><label for="cDet">Detector</label><select id="cDet"><option value="farmer">Farmer 0.6 cc (PTW 30013)</option><option value="semiflex">Semiflex 0.125 cc</option><option value="diode">Diode (point detector)</option></select></div>
+              <div class="field"><label for="cFx">Field X (cm, at isocentre)</label><input id="cFx" type="number" step="0.5" min="0.5" max="40" value="10"></div>
+              <div class="field"><label for="cFy">Field Y (cm, at isocentre)</label><input id="cFy" type="number" step="0.5" min="0.5" max="40" value="10"></div>
+              <div class="field"><label for="cSSD">SSD (cm)</label><input id="cSSD" type="number" step="0.5" min="60" max="140" value="95"></div>
+              <div class="field"><label for="cDepth">Chamber depth (cm)</label><input id="cDepth" type="number" step="0.1" min="0" max="38" value="5"></div>
+            </div>
+            <div class="field"><span class="lab">Quick depths (as in the VERT depth menu)</span>
+              <div class="presets" id="depthPresets"></div></div>
+            <div class="field"><span class="lab">Quick set-ups</span>
+              <div class="presets" id="setupPresets">
+                <button class="chip" data-setup="cal">Calibration · SSD 95 · d 5</button>
+                <button class="chip" data-setup="tpr10">TPR · d 10 · SSD 90</button>
+                <button class="chip" data-setup="tpr20">TPR · d 20 · SSD 80</button>
+                <button class="chip" data-setup="dmax">d<sub>max</sub> · SSD 100</button>
+              </div></div>
+          </div>
+          <div class="card">
+            <div class="grid2" style="align-items:end">
+              <div class="field"><label for="cMU">Monitor units</label><input id="cMU" type="number" min="1" max="999" value="100"></div>
+              <button class="btn beam" id="beamBtn">Beam On · Measure</button>
+            </div>
+            <div class="readout" aria-live="polite">
+              <div class="sub">DOSE TO WATER AT CHAMBER</div>
+              <div class="big" id="doseBig">—<small>Gy</small></div>
+              <div class="sub" id="doseSub">No reading yet</div>
+            </div>
+            <div class="stats">
+              <div class="stat"><span>READINGS (this set-up)</span><b id="sN">0</b></div>
+              <div class="stat"><span>MEAN (cGy)</span><b id="sMean">—</b></div>
+              <div class="stat"><span>SD (cGy)</span><b id="sSD">—</b></div>
+            </div>
+            <div class="note teal" id="calNote">Calibration check: at SSD 95 cm, depth 5 cm, 10 × 10 cm, 100 MU should read 1.000 Gy.</div>
+          </div>
+          <div class="card">
+            <div class="btns" style="justify-content:space-between;align-items:center"><h3>Measurement log</h3>
+              <div class="btns"><button class="btn sm" id="copyLog">Copy log for Excel</button><button class="btn sm" id="clearLog">Clear</button></div></div>
+            <div class="tablewrap"><table id="logTable"><thead><tr><th>#</th><th>Energy</th><th>Field (cm)</th><th>SSD</th><th>Depth</th><th>Detector</th><th>Dose (cGy)</th></tr></thead><tbody></tbody></table></div>
+          </div>
+        </section>
+
+        <!-- SCANNER -->
+        <section class="page" data-page="scanner" hidden>
+          <h2>Water tank scanning<small>Depth dose curves and beam profiles, measured point by point with the chosen detector.</small></h2>
+          <div class="card">
+            <div class="grid3">
+              <div class="field"><label for="sEnergy">Beam energy</label><select id="sEnergy"><option value="6MV">6 MV</option><option value="10MV">10 MV</option></select></div>
+              <div class="field"><label for="sFx">Cross (mm)</label><input id="sFx" type="number" step="5" min="5" max="400" value="100"></div>
+              <div class="field"><label for="sFy">Inline (mm)</label><input id="sFy" type="number" step="5" min="5" max="400" value="100"></div>
+              <div class="field"><label for="sSSD">SSD (cm)</label><input id="sSSD" type="number" step="1" min="60" max="140" value="100"></div>
+              <div class="field"><label for="sDet">Detector</label><select id="sDet"><option value="farmer">Farmer 0.6 cc</option><option value="semiflex" selected>Semiflex 0.125 cc</option><option value="diode">Diode</option></select></div>
+              <div class="field"><label for="sNorm">Normalise to</label><select id="sNorm"><option value="max">Maximum (PDD) / CAX</option><option value="abs">Absolute dose (cGy)</option></select></div>
+            </div>
+            <div class="btns" role="radiogroup" aria-label="Scan type">
+              <label class="radio"><input type="radio" name="scanType" value="pdd" checked> Depth profile</label>
+              <label class="radio"><input type="radio" name="scanType" value="cross"> Crossline profile</label>
+              <label class="radio"><input type="radio" name="scanType" value="inline"> Inline profile</label>
+            </div>
+            <div class="grid3" id="pddOpts">
+              <div class="field"><label for="sFrom">From (mm)</label><input id="sFrom" type="number" value="0" min="0" max="380"></div>
+              <div class="field"><label for="sTo">To (mm)</label><input id="sTo" type="number" value="300" min="1" max="380"></div>
+              <div class="field"><label for="sStep">Step (mm)</label><input id="sStep" type="number" value="1" min="0.5" max="50" step="0.5"></div>
+            </div>
+            <div class="grid3" id="profOpts" hidden>
+              <div class="field"><label for="sLen">Length (mm)</label><input id="sLen" type="number" value="300" min="20" max="600"></div>
+              <div class="field"><label for="sOff">Offset (mm)</label><input id="sOff" type="number" value="0" min="-200" max="200"></div>
+              <div class="field"><label for="sPStep">Step (mm)</label><input id="sPStep" type="number" value="1" min="0.5" max="20" step="0.5"></div>
+              <div class="field"><label for="sPDepth">Depth (mm)</label><input id="sPDepth" type="number" value="100" min="0" max="380"></div>
+            </div>
+            <div class="btns"><button class="btn primary" id="scanBtn">Measure</button><button class="btn" id="scanReset">Reset</button><button class="btn sm" id="scanCopy">Copy data for Excel</button></div>
+          </div>
+          <div class="chartbox"><canvas id="scanChart" aria-label="Scan chart"></canvas></div>
+          <div class="card"><h3>Analysis</h3><div class="tablewrap"><table id="scanTable"><thead></thead><tbody></tbody></table></div>
+            <p class="hint" style="margin:0">Up to 5 series. PDD metrics: d<sub>max</sub>, PDD at 100/200 mm, PDD<sub>20</sub>/PDD<sub>10</sub>. Profile metrics: 50% field width, 80–20% penumbra, flatness, symmetry.</p></div>
+        </section>
+
+        <!-- TASKS -->
+        <section class="page" data-page="tasks" hidden>
+          <h2>Lab script — six tasks<small>Each task sets up the linac for you and takes three readings per point, then compares with the expected values.</small></h2>
+          <div class="note red">Practice data from a simulation. Use it to rehearse and to check your real VERT readings are sensible — never in place of your own measurements.</div>
+          <div class="btns"><button class="btn primary" id="runAll">Run the full lab (tasks 1–6)</button><button class="btn" id="copyAll">Copy all results for Excel</button>
+            <label class="check"><input type="checkbox" id="fastRun"> Fast mode</label></div>
+          <div id="taskList" style="display:grid;gap:10px"></div>
+        </section>
+
+        <!-- ELECTROMETER -->
+        <section class="page" data-page="elec" hidden>
+          <h2>Electrometer &amp; TRS-398 corrections<small>Read raw charge (nC), then apply k<sub>TP</sub>, recombination and polarity corrections.</small></h2>
+          <div class="card">
+            <h3>Measurement set-up</h3>
+            <div class="presets">
+              <button class="chip" data-eset="cal">Reference · SSD 95 · d 5</button>
+              <button class="chip" data-eset="tpr10">D10 · SSD 90 · d 10</button>
+              <button class="chip" data-eset="tpr20">D20 · SSD 80 · d 20</button>
+              <button class="chip" data-eset="current">Use current linac set-up</button>
+            </div>
+            <div class="hint" id="eSetup">—</div>
+            <div class="grid3">
+              <div class="field"><label for="eT">Water temp. T (°C)</label><input id="eT" type="number" step="0.1" value="18"></div>
+              <div class="field"><label for="eP">Pressure P</label><input id="eP" type="number" step="0.1" value="1018"></div>
+              <div class="field"><label for="ePU">Pressure unit</label><select id="ePU"><option value="mbar">mbar (hPa)</option><option value="kPa">kPa</option><option value="mmHg">mmHg</option></select></div>
+              <div class="field"><label for="eCF">Chamber factor (cGy/nC)</label><input id="eCF" type="number" step="0.001" value="0.784"></div>
+              <div class="field"><span class="lab">Bias voltage</span><div class="seg" id="eV"><button data-v="300" class="on">300 V</button><button data-v="150">150 V</button></div></div>
+              <div class="field"><span class="lab">Polarity</span><div class="seg" id="ePol"><button data-p="1" class="on">+</button><button data-p="-1">−</button></div></div>
+            </div>
+            <div class="btns"><button class="btn beam" id="eMeasure">Beam On · Read charge</button><button class="btn" id="eAuto">Measure M₁, M₂ and M₋ automatically</button></div>
+            <div class="lcd" aria-live="polite"><span class="m" id="eLcdMode">ELECTROMETER · +300 V · INTEGRATE</span><span class="v" id="eLcd">0.000 nC</span></div>
+          </div>
+          <div class="card">
+            <h3>Readings</h3>
+            <dl class="kv">
+              <dt>M₁ (+300 V, normal polarity)</dt><dd id="eM1">—</dd>
+              <dt>M₂ (+150 V, half voltage)</dt><dd id="eM2">—</dd>
+              <dt>M₋ (−300 V, reversed polarity)</dt><dd id="eMm">—</dd>
+            </dl>
+          </div>
+          <div class="card">
+            <h3>Corrections</h3>
+            <dl class="kv" id="eCorr"></dl>
+            <div class="note" id="eUnitNote" hidden></div>
+          </div>
+          <div class="card">
+            <h3>Task 6 — back-calculate R from a dose</h3>
+            <p class="hint" style="margin:0">Lab script Equation 1: Dose (cGy) = R × Chamber factor × P<sub>ion</sub> × k<sub>TP</sub> → R = Dose ÷ (CF × P<sub>ion</sub> × k<sub>TP</sub>)</p>
+            <div class="grid3">
+              <div class="field"><label for="bDose">Dose (cGy)</label><input id="bDose" type="number" step="0.01" value="85.40"></div>
+              <div class="field"><label for="bPion">P<sub>ion</sub></label><input id="bPion" type="number" step="0.0001" value="1.0046"></div>
+              <div class="field"><span class="lab">From Task 5</span><div class="btns"><button class="btn sm" id="bD10">D10</button><button class="btn sm" id="bD20">D20</button></div></div>
+            </div>
+            <dl class="kv" id="bOut"></dl>
+          </div>
+        </section>
+
+        <!-- LINAC -->
+        <section class="page" data-page="linac" hidden>
+          <h2>Linac control<small>Treatment-console view of the machine set-up. Changes move the 3D room.</small></h2>
+          <div class="card">
+            <table class="console" id="consoleTbl">
+              <thead><tr><th>Parameter</th><th>Set</th><th>Actual</th></tr></thead>
+              <tbody></tbody>
+            </table>
+            <div class="statusbar" id="statusbar"></div>
+          </div>
+          <div class="card">
+            <h3>Simulation settings</h3>
+            <label class="check"><input type="checkbox" id="optVert" checked> VERT dosimetry restrictions (gantry, collimator and couch at 0°, square fields, 100 MU)</label>
+            <label class="check"><input type="checkbox" id="optNoise" checked> Realistic chamber noise (σ = 0.15% per reading)</label>
+            <div class="btns"><button class="btn" id="resetCal">Reset to calibration set-up</button></div>
+          </div>
+          <div class="card">
+            <h3>About the beam model</h3>
+            <dl class="kv">
+              <dt>Calibration</dt><dd>100 MU = 1.000 Gy · SSD 95 · d 5 · 10×10</dd>
+              <dt>6 MV TPR<sub>20/10</sub></dt><dd>0.681 (NPL Elekta)</dd>
+              <dt>6 MV TPR<sub>10</sub> (d10/d5)</dt><dd>0.854 (NPL 0.852)</dd>
+              <dt>10 MV TPR<sub>20/10</sub></dt><dd>0.735</dd>
+              <dt>d<sub>max</sub></dt><dd>1.5 cm (6 MV) · 2.3 cm (10 MV)</dd>
+              <dt>Output factors</dt><dd>NPL IR 40 (Agility), 0.5–40 cm</dd>
+            </dl>
+            <p class="hint" style="margin:0">Dose = MU × S<sub>c</sub>(c) × S<sub>p</sub>(s<sub>d</sub>) × TMR(d, s<sub>d</sub>) × (100 / (SSD + d))² × OAR, normalised to the calibration point. The detector reading includes volume averaging over the chamber's sensitive volume, so a Farmer chamber under-reads in small fields and in the build-up region. Values are realistic but are not VERT's own beam data.</p>
+          </div>
+        </section>
+      </div>
+      <div class="foot">Created by Abdulazeez Abdulazeez · MSc Medical Physics, Swansea University. Simulation for learning. Beam data fitted to NPL Report IR 40 and the NPL Elekta TPR<sub>20/10</sub> (0.681).</div>
+    </aside>
+  </main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
+<script>
+/* Virtual Linac Lab — beam physics engine (isocentric TMR formalism).
+   Calibration: 100 MU = 100 cGy at SSD 95 cm, depth 5 cm, 10x10 cm (field defined at isocentre, SAD 100 cm).
+   6 MV fitted to NPL data: TPR20/10 = 0.681, TPR10 = 0.852 (NPL IR 40), output factors 4x4–40x40 (NPL IR 40, Table 11),
+   small-field output factors (W1 scintillator, IR 40 Table 19). 10 MV fitted to TPR20/10 = 0.735, TPR10 = 0.878. */
+const Beam = (() => {
+  const E = {
+    "6MV": { label: "6 MV", mu: 0.0542, k: 0.055928, lam: 8.207764, g: -0.011595, b1: 0.019195, b2: -0.006497, a: 0.030019,
+      dm: 1.5, S0: 0.38, S1: 0.008, sig0: 0.28, sig1: 0.010, h0: 0.035, hd: 8, h1: 0.006, pion: 1.0046, tpr: 0.681,
+      opfTrue: [[0.5, 0.465], [1, 0.667], [2, 0.795], [3, 0.846], [4, 0.879]] },
+    "10MV": { label: "10 MV", mu: 0.042469, k: 0.043716, lam: 8.893758, g: -0.015009, b1: 0.018012, b2: -0.01077, a: 0.031078,
+      dm: 2.3, S0: 0.26, S1: 0.007, sig0: 0.32, sig1: 0.012, h0: 0.045, hd: 10, h1: 0.006, pion: 1.0055, tpr: 0.735,
+      opfTrue: [[0.5, 0.44], [1, 0.64], [2, 0.806], [3, 0.846], [4, 0.895]] },
+  };
+  const DETECTORS = {
+    farmer: { name: "Farmer 0.6 cc (PTW 30013)", L: 2.3, r: 0.305 },
+    semiflex: { name: "Semiflex 0.125 cc (PTW 31010)", L: 0.65, r: 0.275 },
+    diode: { name: "Diode (PTW 60012)", L: 0, r: 0 },
+  };
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  function erf(x) { // Abramowitz-Stegun 7.1.26
+    const s = Math.sign(x); x = Math.abs(x);
+    const t = 1 / (1 + 0.3275911 * x);
+    const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+    return s * y;
+  }
+  const lerpTable = (tab, x) => {
+    if (x <= tab[0][0]) return tab[0][1];
+    for (let i = 1; i < tab.length; i++) if (x <= tab[i][0]) {
+      const [x0, y0] = tab[i - 1], [x1, y1] = tab[i];
+      return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+    }
+    return tab[tab.length - 1][1];
+  };
+  const Sc = (p, c) => 1 + p.a * Math.log(clamp(c, 0.5, 40) / 10);
+  const Sp = (p, s) => { const L = Math.log(clamp(s, 0.5, 60) / 10); return 1 + p.b1 * L + p.b2 * L * L; };
+  function TMR(p, d, s) {
+    s = clamp(s, 0.5, 60);
+    if (d < p.dm) {
+      const S = clamp(p.S0 + p.S1 * s, 0.2, 0.75);
+      const u = clamp(d / p.dm, 0, 1);
+      // build-up shaped so the PDD (SSD 100) peaks exactly at dmax: compensate the inverse-square term
+      return (S + (1 - S) * (1 - Math.pow(1 - u, 2.6))) * ((100 + d) / (100 + p.dm)) ** 2;
+    }
+    const x = d - p.dm, f = p.k * s / (s + p.lam);
+    return Math.exp(-p.mu * x) * (1 + f * x + p.g * f * x * x);
+  }
+  // small-field correction so that the output factor (SSD 90, d 10) matches measured small-field data
+  function smallField(p, c) {
+    if (c >= 4) return 1;
+    const model = (cc) => Sc(p, cc) * Sp(p, cc) * TMR(p, 10, cc) / (Sc(p, 10) * Sp(p, 10) * TMR(p, 10, 10));
+    const tab = p.opfTrue.map(([cc, o]) => [cc, o / model(cc)]);
+    const r4 = tab[tab.length - 1][1];
+    return lerpTable(tab, clamp(c, 0.5, 4)) / r4; // continuous with 1 at 4x4
+  }
+  const eqSq = (fx, fy) => 2 * fx * fy / (fx + fy);
+  // off-axis ratio along one axis; f = field length on that axis at isocentre, d = depth, ssd
+  function oar(p, x, f, d, ssd) {
+    const a = f * (ssd + d) / 200;
+    const sig = p.sig0 + p.sig1 * Math.max(d, 0);
+    const core = (u) => 0.5 * (erf((a - u) / (Math.SQRT2 * sig)) + erf((a + u) / (Math.SQRT2 * sig)));
+    const H = p.h0 * Math.exp(-Math.max(d, 0) / p.hd) - p.h1;
+    const val = (u) => {
+      const c = core(u);
+      const horn = 1 + H * Math.min(Math.abs(u), a) ** 2 / 400;
+      const A = 0.012 + 0.0011 * f * (1 + Math.max(d, 0) / 20);
+      const tail = (1 - c) * (0.004 + A * Math.exp(-Math.max(Math.abs(u) - a, 0) / 3));
+      return c * horn + tail;
+    };
+    return val(x) / val(0);
+  }
+  // relative dose at a point (x crossline, y inline, depth d) — everything except absolute output
+  function rel(p, x, y, d, fx, fy, ssd) {
+    d = Math.max(d, 0);
+    const c = eqSq(fx, fy), s = c * (ssd + d) / 100;
+    return Sp(p, s) * TMR(p, d, s) * (100 / (ssd + d)) ** 2 * oar(p, x, fx, d, ssd) * oar(p, y, fy, d, ssd);
+  }
+  function volumeAverage(p, det, x, y, d, fx, fy, ssd) {
+    const D = DETECTORS[det];
+    if (!D || D.r === 0) return 1;
+    const c0 = rel(p, x, y, d, fx, fy, ssd);
+    let sum = 0, n = 0;
+    const N = 7, M = 9;
+    for (let i = 0; i < N; i++) for (let k = 0; k < N; k++) {
+      const u = -1 + 2 * i / (N - 1), w = -1 + 2 * k / (N - 1);
+      if (u * u + w * w > 1.0001) continue;
+      for (let j = 0; j < M; j++) {
+        const v = -1 + 2 * j / (M - 1);
+        sum += rel(p, x + u * D.r, y + v * D.L / 2, d + w * D.r, fx, fy, ssd); n++;
+      }
+    }
+    return (sum / n) / c0;
+  }
+  let gaussSpare = null;
+  function gauss() {
+    if (gaussSpare !== null) { const g = gaussSpare; gaussSpare = null; return g; }
+    let u = 0, v = 0; while (u === 0) u = Math.random(); while (v === 0) v = Math.random();
+    const m = Math.sqrt(-2 * Math.log(u)); gaussSpare = m * Math.sin(2 * Math.PI * v); return m * Math.cos(2 * Math.PI * v);
+  }
+  // absolute dose (cGy) to water at a point
+  function dose(o) {
+    const p = E[o.energy || "6MV"];
+    const fx = o.fx ?? 10, fy = o.fy ?? fx, ssd = o.ssd ?? 100, d = o.depth ?? 5, mu = o.mu ?? 100;
+    const x = o.x || 0, y = o.y || 0;
+    const c = eqSq(fx, fy);
+    const norm = Sc(p, 10) * Sp(p, 10) * TMR(p, 5, 10);
+    const out = Sc(p, c) * smallField(p, c);
+    const r = rel(p, x, y, d, fx, fy, ssd);
+    const trueDose = mu * 1.0 * out * r / norm;
+    const va = o.detector ? volumeAverage(p, o.detector, x, y, d, fx, fy, ssd) : 1;
+    const noise = o.noise ? 1 + o.noise * gauss() : 1;
+    return { dose: trueDose * va * noise, trueDose, va, sc: Sc(p, c) * smallField(p, c), eq: c };
+  }
+  // ---------- electrometer / chamber reading model ----------
+  const kTP = (T, P) => ((273.15 + T) / 293.15) * (1013.25 / P);
+  function chargeReading(o) { // returns raw nC the electrometer shows
+    const p = E[o.energy || "6MV"];
+    const D = o.dose; // cGy delivered (as seen by chamber)
+    const k = kTP(o.T, o.P);
+    const V = Math.abs(o.voltage || 300);
+    const pionV = 1 + (p.pion - 1) * (300 / V);
+    const polEff = (o.polarity || 1) > 0 ? 1.0004 : 0.9998;
+    const M = D / (o.CF * k * pionV) * polEff;
+    const noise = o.noise ? 1 + o.noise * gauss() : 1;
+    return M * noise;
+  }
+  const ksTwoVoltage = (M1, M2) => { const r = M1 / M2; return 2.337 - 3.636 * r + 2.299 * r * r; }; // TRS-398 pulsed, V1/V2 = 2
+  return { E, DETECTORS, Sc, Sp, TMR, oar, rel, dose, smallField, eqSq, kTP, chargeReading, ksTwoVoltage, erf, clamp };
+})();
+if (typeof module !== "undefined") module.exports = Beam;
+
+</script>
+<script>
+"use strict";
+/* ============================== utilities ============================== */
+const $ = (id) => document.getElementById(id);
+const qs = (sel, root = document) => root.querySelector(sel);
+const qsa = (sel, root = document) => [...root.querySelectorAll(sel)];
+const fx = (v, n = 2) => (v === null || v === undefined || Number.isNaN(v)) ? "—" : Number(v).toFixed(n);
+const mean = (a) => a.reduce((s, v) => s + v, 0) / a.length;
+const sdev = (a) => { if (a.length < 2) return NaN; const m = mean(a); return Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / (a.length - 1)); };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const DEG = Math.PI / 180;
+const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+let toastTimer = null;
+function toast(msg, ok = false) {
+  const t = $("toast"); t.textContent = msg; t.classList.toggle("ok", ok); t.classList.add("show");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 3200);
+}
+async function copyText(text, label = "Copied") {
+  try { await navigator.clipboard.writeText(text); toast(label + " — paste into Excel", true); }
+  catch (e) {
+    const ta = document.createElement("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    let ok = false; try { ok = document.execCommand("copy"); } catch (e2) { ok = false; }
+    ta.remove(); toast(ok ? label + " — paste into Excel" : "Copy was blocked by the browser. Select the table and copy it manually.", ok);
+  }
+}
+
+/* ============================== state ============================== */
+const st = {
+  energy: "6MV", fx: 10, fy: 10, ssd: 95, depth: 5, mu: 100, detector: "farmer",
+  gantry: 0, coll: 0, couch: 0, lat: 0, lng: 0,
+  act: { gantry: 0, coll: 0, couch: 0 },
+  vert: true, noise: 0.0015, wash: true, lasers: true, light: true,
+  beamOn: false, busy: false, probe: null,
+};
+const TYP_PDD = { 0.5: 85, 1: 97, 1.5: 100, 2: 99, 5: 86, 7: 79, 10: 67, 15: 51, 20: 38 };
+const TYP_OF = { 4: 0.91, 6: 0.95, 8: 0.98, 10: 1.0, 15: 1.04, 20: 1.06 };
+const BJR17 = [[0.60, 3.5], [0.62, 3.9], [0.64, 4.4], [0.66, 5.0], [0.68, 5.8], [0.70, 7], [0.72, 8], [0.74, 9.5], [0.75, 10.5], [0.76, 12], [0.77, 14], [0.78, 20], [0.79, 25]];
+const NPL_TPR = { "6MV": 0.681, "10MV": 0.735 };
+const surfaceY = () => 100 - st.ssd;                 // world y of the water surface (isocentre at y = 0)
+const couchTopY = () => surfaceY() - 40.5;            // tank: 40 cm water on a 0.5 cm base
+const chamberOffset = () => {                          // chamber position relative to the beam axis (cm)
+  const t = st.couch * DEG;
+  return { x: st.lat * Math.cos(t) + st.lng * Math.sin(t), y: -st.lat * Math.sin(t) + st.lng * Math.cos(t) };
+};
+function interlock() {
+  const a = st.act;
+  if (Math.abs(a.gantry - st.gantry) > 0.05 || Math.abs(a.coll - st.coll) > 0.05 || Math.abs(a.couch - st.couch) > 0.05) return "Machine is still moving";
+  if (Math.abs(st.gantry) > 0.01) return "Gantry must be at 0° — the water-phantom dosimetry module only measures with a vertical beam";
+  if (st.vert && Math.abs(st.coll) > 0.01) return "VERT restriction: set the collimator to 0°";
+  if (st.vert && Math.abs(st.couch) > 0.01) return "VERT restriction: set the couch rotation to 0°";
+  if (st.depth > 38) return "The chamber is below the water — maximum depth is 38 cm";
+  if (st.depth < 0) return "The chamber is above the water surface";
+  return null;
+}
+
+/* ============================== physics wrapper ============================== */
+function readDose(over = {}) {
+  const o = Object.assign({ energy: st.energy, fx: st.fx, fy: st.fy, ssd: st.ssd, depth: st.depth, mu: st.mu, detector: st.detector }, over);
+  const off = chamberOffset();
+  return Beam.dose({ energy: o.energy, fx: o.fx, fy: o.fy, ssd: o.ssd, depth: o.depth, mu: o.mu, detector: o.detector,
+    x: (o.x ?? 0) + off.x, y: (o.y ?? 0) + off.y, noise: o.quiet ? 0 : (o.scan ? st.noise * 0.35 : st.noise) }).dose;
+}
+function bjrMV(tpr) {
+  if (tpr < BJR17[0][0] || tpr > BJR17[BJR17.length - 1][0]) return NaN;
+  for (let i = 1; i < BJR17.length; i++) if (tpr <= BJR17[i][0]) {
+    const [x0, y0] = BJR17[i - 1], [x1, y1] = BJR17[i]; return y0 + (y1 - y0) * (tpr - x0) / (x1 - x0);
+  }
+  return BJR17[BJR17.length - 1][1];
+}
+
+/* ============================== 3D room ============================== */
+const G3 = { ok: false };
+function makeCanvasTex(w, h, draw) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h; draw(c.getContext("2d"), w, h);
+  const t = new THREE.CanvasTexture(c); t.anisotropy = 4; return t;
+}
+function init3D() {
+  if (typeof THREE === "undefined") { toast("3D view could not load. Measurements still work."); return; }
+  const canvas = $("gl");
+  let renderer;
+  try { renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" }); }
+  catch (e) { toast("WebGL is not available — the 3D room is off, measurements still work."); return; }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x141c20);
+  scene.fog = new THREE.Fog(0x141c20, 1100, 2200);
+  const camera = new THREE.PerspectiveCamera(36, 1, 2, 5000);
+
+  scene.add(new THREE.HemisphereLight(0xe8f1f4, 0x30393d, 0.62));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.62); sun.position.set(260, 520, 360); sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024); Object.assign(sun.shadow.camera, { left: -420, right: 420, top: 420, bottom: -420, near: 50, far: 1600 });
+  scene.add(sun);
+  const fill = new THREE.DirectionalLight(0xbfe3ff, 0.25); fill.position.set(-400, 200, 200); scene.add(fill);
+
+  const M = {
+    shell: new THREE.MeshStandardMaterial({ color: 0xe9eded, roughness: 0.42, metalness: 0.04 }),
+    shell2: new THREE.MeshStandardMaterial({ color: 0xd3d9da, roughness: 0.5 }),
+    dark: new THREE.MeshStandardMaterial({ color: 0x2b3337, roughness: 0.6 }),
+    teal: new THREE.MeshStandardMaterial({ color: 0x38c4b6, roughness: 0.4, emissive: 0x0b3330 }),
+    glass: new THREE.MeshStandardMaterial({ color: 0xe4f6f8, transparent: true, opacity: 0.1, depthWrite: false, side: THREE.DoubleSide, roughness: 0.1 }),
+    water: new THREE.MeshStandardMaterial({ color: 0x2aa6bb, transparent: true, opacity: 0.2, depthWrite: false, roughness: 0.15 }),
+    chamber: new THREE.MeshStandardMaterial({ color: 0x40484c, roughness: 0.35, metalness: 0.4 }),
+    stem: new THREE.MeshStandardMaterial({ color: 0xb8c0c3, roughness: 0.35, metalness: 0.5 }),
+    cable: new THREE.MeshStandardMaterial({ color: 0x1d2326, roughness: 0.7 }),
+  };
+  // room
+  const floorTex = makeCanvasTex(512, 512, (g, w, h) => {
+    g.fillStyle = "#6b7579"; g.fillRect(0, 0, w, h); g.strokeStyle = "#5e676b"; g.lineWidth = 2;
+    for (let i = 0; i <= 8; i++) { g.beginPath(); g.moveTo(i * 64, 0); g.lineTo(i * 64, h); g.stroke(); g.beginPath(); g.moveTo(0, i * 64); g.lineTo(w, i * 64); g.stroke(); }
+  });
+  floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping; floorTex.repeat.set(6, 6);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(1800, 1800), new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.92 }));
+  floor.rotation.x = -Math.PI / 2; floor.position.y = -130; floor.receiveShadow = true; scene.add(floor);
+  const wallM = new THREE.MeshStandardMaterial({ color: 0x46545a, roughness: 0.95 });
+  const back = new THREE.Mesh(new THREE.PlaneGeometry(1800, 700), wallM); back.position.set(0, 220, -360); scene.add(back);
+  const side = new THREE.Mesh(new THREE.PlaneGeometry(1800, 700), new THREE.MeshStandardMaterial({ color: 0x3f4c52, roughness: 0.95 }));
+  side.rotation.y = Math.PI / 2; side.position.set(-560, 220, 300); scene.add(side);
+  const turntable = new THREE.Mesh(new THREE.CircleGeometry(120, 64), new THREE.MeshStandardMaterial({ color: 0x59625f, roughness: 0.8 }));
+  turntable.rotation.x = -Math.PI / 2; turntable.position.y = -129.6; turntable.receiveShadow = true; scene.add(turntable);
+
+  // gantry stand + drum (static)
+  const stand = new THREE.Mesh(new THREE.BoxGeometry(300, 300, 140), M.shell2); stand.position.set(0, 20, -285); stand.castShadow = true; stand.receiveShadow = true; scene.add(stand);
+  const drum = new THREE.Mesh(new THREE.CylinderGeometry(128, 128, 70, 72), M.shell); drum.rotation.x = Math.PI / 2; drum.position.set(0, 0, -205); drum.castShadow = true; scene.add(drum);
+  const stripe = new THREE.Mesh(new THREE.TorusGeometry(120, 1.4, 8, 96), M.teal); stripe.position.set(0, 0, -169.5); scene.add(stripe);
+  const label = new THREE.Mesh(new THREE.PlaneGeometry(90, 18), new THREE.MeshBasicMaterial({ transparent: true, map: makeCanvasTex(512, 102, (g, w, h) => {
+    g.clearRect(0, 0, w, h); g.fillStyle = "#59676d"; g.font = "600 56px 'Barlow Semi Condensed', Arial"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText("LINAC · 6/10 MV", w / 2, h / 2);
+  }) }));
+  label.position.set(0, -78, -169.4); scene.add(label);
+
+  // rotating gantry
+  const gantry = new THREE.Group(); scene.add(gantry);
+  const arm = new THREE.Mesh(new THREE.BoxGeometry(86, 48, 175), M.shell); arm.position.set(0, 140, -85); arm.castShadow = true; gantry.add(arm);
+  const head = new THREE.Mesh(new THREE.CylinderGeometry(46, 50, 56, 56), M.shell); head.position.set(0, 128, 0); head.castShadow = true; gantry.add(head);
+  const headCap = new THREE.Mesh(new THREE.SphereGeometry(46, 40, 16, 0, Math.PI * 2, 0, Math.PI / 2), M.shell); headCap.position.set(0, 156, 0); gantry.add(headCap);
+  const coll = new THREE.Group(); coll.position.set(0, 85, 0); gantry.add(coll);
+  const collBody = new THREE.Mesh(new THREE.CylinderGeometry(34, 30, 30, 48), M.shell2); collBody.castShadow = true; coll.add(collBody);
+  const collRing = new THREE.Mesh(new THREE.TorusGeometry(31, 1.6, 8, 64), M.teal); collRing.rotation.x = Math.PI / 2; collRing.position.y = -15; coll.add(collRing);
+  const collFace = new THREE.Mesh(new THREE.CircleGeometry(30, 48), M.dark); collFace.rotation.x = Math.PI / 2; collFace.position.y = -15.1; coll.add(collFace);
+  // beam frustum (in collimator frame, source at local y = +15)
+  const beamGeo = new THREE.BufferGeometry();
+  beamGeo.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(8 * 3), 3));
+  beamGeo.setIndex([0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7]);
+  const beamMat = new THREE.MeshBasicMaterial({ color: 0xffdf7a, transparent: true, opacity: 0.14, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
+  const beam = new THREE.Mesh(beamGeo, beamMat); coll.add(beam);
+  const beamEdgeGeo = new THREE.BufferGeometry(); beamEdgeGeo.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(8 * 3), 3));
+  beamEdgeGeo.setIndex([0, 4, 1, 5, 2, 6, 3, 7]);
+  const beamEdges = new THREE.LineSegments(beamEdgeGeo, new THREE.LineBasicMaterial({ color: 0xffe9a3, transparent: true, opacity: 0.35 })); coll.add(beamEdges);
+
+  // couch
+  const couchRot = new THREE.Group(); scene.add(couchRot);
+  const couchT = new THREE.Group(); couchRot.add(couchT);
+  const topTex = makeCanvasTex(128, 1024, (g, w, h) => {
+    g.fillStyle = "#1a1e20"; g.fillRect(0, 0, w, h);
+    g.strokeStyle = "#2a3034"; for (let y = 0; y < h; y += 6) { g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); }
+    g.fillStyle = "#b9c2c5"; g.font = "bold 20px Arial"; g.textAlign = "center";
+    ["H1", "0", "1", "2", "3", "4", "F1"].forEach((t, i) => { const y = 90 + i * 140; g.fillRect(6, y, 18, 3); g.fillRect(w - 24, y, 18, 3); g.fillText(t, 15, y + 26); g.fillText(t, w - 15, y + 26); });
+  });
+  const couchTop = new THREE.Mesh(new THREE.BoxGeometry(53, 5, 240), [M.dark, M.dark, new THREE.MeshStandardMaterial({ map: topTex, roughness: 0.7 }), M.dark, M.dark, M.dark]);
+  couchTop.castShadow = true; couchTop.receiveShadow = true; couchT.add(couchTop);
+  const ped = new THREE.Mesh(new THREE.BoxGeometry(42, 1, 52), M.shell2); ped.castShadow = true; couchT.add(ped);
+  const base = new THREE.Mesh(new THREE.BoxGeometry(80, 10, 100), M.shell); base.position.set(0, -125, 150); couchT.add(base);
+
+  // water phantom (sits on couch)
+  const tank = new THREE.Group(); couchT.add(tank);
+  const tankBox = new THREE.Mesh(new THREE.BoxGeometry(42, 44, 42), M.glass); tankBox.position.y = 22; tank.add(tankBox);
+  const tankEdges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(42, 44, 42)), new THREE.LineBasicMaterial({ color: 0xcfe8ee, transparent: true, opacity: 0.8 }));
+  tankEdges.position.y = 22; tank.add(tankEdges);
+  const water = new THREE.Mesh(new THREE.BoxGeometry(41, 40, 41), M.water); water.position.y = 20.5; tank.add(water);
+  const waterTop = new THREE.Mesh(new THREE.PlaneGeometry(41, 41), new THREE.MeshStandardMaterial({ color: 0x8fe7f2, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide }));
+  waterTop.rotation.x = -Math.PI / 2; waterTop.position.y = 40.5; tank.add(waterTop);
+  const rulerTex = makeCanvasTex(128, 1024, (g, w, h) => {
+    g.clearRect(0, 0, w, h); g.fillStyle = "rgba(240,248,250,0.9)"; g.font = "bold 34px Arial"; g.textAlign = "left"; g.textBaseline = "middle";
+    for (let cm = 0; cm <= 40; cm++) { const y = cm / 40 * (h - 24) + 12; const L = cm % 5 === 0 ? 46 : 24; g.fillRect(0, y - 2, L, 4); if (cm % 5 === 0) g.fillText(String(cm), 54, y); }
+  });
+  const ruler = new THREE.Mesh(new THREE.PlaneGeometry(5, 40), new THREE.MeshBasicMaterial({ map: rulerTex, transparent: true, depthWrite: false }));
+  ruler.position.set(15.5, 20.5, 21.1); tank.add(ruler);
+  // dose wash slice through the central axis (x-depth plane)
+  const WW = 128, WH = 128;
+  const washData = new Uint8Array(WW * WH * 4);
+  const washTex = new THREE.DataTexture(washData, WW, WH, THREE.RGBAFormat); washTex.magFilter = THREE.LinearFilter; washTex.minFilter = THREE.LinearFilter;
+  const wash = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshBasicMaterial({ map: washTex, transparent: true, depthWrite: false, side: THREE.DoubleSide }));
+  wash.position.set(0, 20.5, 0); tank.add(wash);
+  // chamber + holder + cable
+  const probe = new THREE.Group(); tank.add(probe);
+  const thimble = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 4.6, 20), M.chamber); thimble.rotation.x = Math.PI / 2; probe.add(thimble);
+  const tip = new THREE.Mesh(new THREE.SphereGeometry(0.9, 16, 10), M.chamber); tip.position.z = -2.3; probe.add(tip);
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 7, 12), M.stem); stem.rotation.x = Math.PI / 2; stem.position.z = 5.8; probe.add(stem);
+  const holder = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1, 10), M.stem); probe.add(holder);
+  let cable = null;
+  // lasers, light field, ODI
+  const laserMat = new THREE.LineBasicMaterial({ color: 0x3dff7d, transparent: true, opacity: 0.95 });
+  const lasers = new THREE.LineSegments(new THREE.BufferGeometry(), laserMat); scene.add(lasers);
+  const lightMat = new THREE.LineBasicMaterial({ color: 0xfff1a8 });
+  const lightField = new THREE.LineSegments(new THREE.BufferGeometry(), lightMat); scene.add(lightField);
+  const lightFill = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0xfff1a8, transparent: true, opacity: 0.18, depthWrite: false }));
+  lightFill.rotation.x = -Math.PI / 2; scene.add(lightFill);
+  const odiCanvas = document.createElement("canvas"); odiCanvas.width = 256; odiCanvas.height = 64;
+  const odiTex = new THREE.CanvasTexture(odiCanvas);
+  const odi = new THREE.Sprite(new THREE.SpriteMaterial({ map: odiTex, transparent: true, depthTest: false }));
+  odi.scale.set(22, 5.5, 1); scene.add(odi);
+
+  Object.assign(G3, { ok: true, renderer, scene, camera, gantry, coll, beam, beamGeo, beamEdgeGeo, beamMat, couchRot, couchT, couchTop, ped,
+    tank, probe, holder, M, lasers, lightField, lightFill, odi, odiCanvas, odiTex, wash, washData, washTex, WW, WH,
+    get cable() { return cable; }, set cable(v) { cable = v; } });
+
+  // orbit camera
+  const orb = { theta: 0.78, phi: 1.2, r: 780, tx: 0, ty: 15, tz: 20 };
+  const goal = { ...orb };
+  G3.orb = orb; G3.goal = goal;
+  const pointers = new Map(); let pinch0 = null;
+  canvas.addEventListener("pointerdown", (e) => { canvas.setPointerCapture(e.pointerId); pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    const p = pointers.get(e.pointerId); const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
+    if (pointers.size === 1) { goal.theta -= dx * 0.006; goal.phi = clamp(goal.phi - dy * 0.005, 0.12, 1.55); }
+    else if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pinch0) goal.r = clamp(goal.r * pinch0 / d, 90, 1400); pinch0 = d;
+    }
+    setViewChip(null);
+  });
+  const up = (e) => { pointers.delete(e.pointerId); if (pointers.size < 2) pinch0 = null; };
+  canvas.addEventListener("pointerup", up); canvas.addEventListener("pointercancel", up);
+  canvas.addEventListener("wheel", (e) => { e.preventDefault(); goal.r = clamp(goal.r * Math.exp(e.deltaY * 0.001), 90, 1400); setViewChip(null); }, { passive: false });
+
+  const ro = new ResizeObserver(() => resize3D()); ro.observe($("stage")); resize3D();
+  rebuildScene(); updateWash();
+  let last = performance.now();
+  function loop(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    // machine motion toward set values (speed 30°/s)
+    let moving = false;
+    for (const k of ["gantry", "coll", "couch"]) {
+      const d = st[k] - st.act[k];
+      if (Math.abs(d) > 0.01) { moving = true; const step = Math.sign(d) * Math.min(Math.abs(d), (reduceMotion ? 360 : 30) * dt); st.act[k] += step; }
+      else st.act[k] = st[k];
+    }
+    if (moving) { applyMotion(); updateHUD(); updateStatus(); }
+    // camera easing
+    const e = reduceMotion ? 1 : 1 - Math.pow(0.0008, dt);
+    for (const k of Object.keys(orb)) orb[k] += (goal[k] - orb[k]) * e;
+    const sp = Math.sin(orb.phi);
+    camera.position.set(orb.tx + orb.r * sp * Math.sin(orb.theta), orb.ty + orb.r * Math.cos(orb.phi), orb.tz + orb.r * sp * Math.cos(orb.theta));
+    camera.lookAt(orb.tx, orb.ty, orb.tz);
+    beamMat.opacity = st.beamOn ? 0.3 + 0.08 * Math.sin(now / 70) : (st.light ? 0.1 : 0.0);
+    G3.beamEdges && (G3.beamEdges.material.opacity = st.beamOn ? 0.7 : 0.3);
+    renderer.render(scene, camera);
+    requestAnimationFrame(loop);
+  }
+  G3.beamEdges = beamEdges;
+  requestAnimationFrame(loop);
+}
+function resize3D() {
+  if (!G3.ok) return;
+  const el = $("stage"); const w = el.clientWidth, h = el.clientHeight;
+  G3.renderer.setSize(w, h, false); G3.camera.aspect = w / Math.max(h, 1); G3.camera.updateProjectionMatrix();
+}
+const VIEWS = {
+  room: { theta: 0.78, phi: 1.2, r: 780, tx: 0, ty: 15, tz: 20 },
+  side: { theta: Math.PI / 2, phi: 1.45, r: 640, tx: 0, ty: 20, tz: -10 },
+  front: { theta: 0.0, phi: 1.32, r: 700, tx: 0, ty: 20, tz: 0 },
+  close: { theta: 0.55, phi: 1.25, r: 175, tx: 0, ty: null, tz: 0 },
+  bev: { theta: 0.0001, phi: 0.13, r: 260, tx: 0, ty: null, tz: 0 },
+};
+function setView(name) {
+  if (!G3.ok) return;
+  const v = { ...VIEWS[name] };
+  if (v.ty === null) v.ty = name === "bev" ? surfaceY() : surfaceY() - 18;
+  if (name === "bev") v.r = Math.max(25, (66 - surfaceY()) / Math.cos(v.phi));
+  Object.assign(G3.goal, v); setViewChip(name);
+}
+function setViewChip(name) { qsa("#views .chip").forEach((b) => b.classList.toggle("active", b.dataset.view === name)); }
+
+function applyMotion() {
+  if (!G3.ok) return;
+  G3.gantry.rotation.z = -st.act.gantry * DEG;
+  G3.coll.rotation.y = st.act.coll * DEG;
+  G3.couchRot.rotation.y = st.act.couch * DEG;
+  const vis = Math.abs(st.act.gantry) < 0.05;
+  G3.lightField.visible = vis && st.light && !st.beamOn; G3.lightFill.visible = G3.lightField.visible;
+  G3.lightField.rotation.y = st.act.coll * DEG; G3.lightFill.rotation.z = st.act.coll * DEG;
+  G3.wash.visible = st.wash && vis && Math.abs(st.act.coll) < 0.05 && Math.abs(st.act.couch) < 0.05;
+}
+function rebuildScene() {
+  if (!G3.ok) return;
+  const sY = surfaceY(), cY = couchTopY();
+  // beam frustum: from the collimator face (world y 70) to below the phantom
+  const pos = G3.beamGeo.attributes.position.array, epos = G3.beamEdgeGeo.attributes.position.array;
+  const yTop = -15, yBot = Math.abs(st.gantry) < 0.05 && st.wash ? (sY - 85) : -(85 - Math.min(cY - 20, -60));
+  const corners = (y) => { const L = (15 - y) / 100; const hx = st.fx / 2 * L, hz = st.fy / 2 * L; return [[-hx, y, -hz], [hx, y, -hz], [hx, y, hz], [-hx, y, hz]]; };
+  [...corners(yTop), ...corners(yBot)].forEach((c, i) => { pos.set(c, i * 3); epos.set(c, i * 3); });
+  G3.beamGeo.attributes.position.needsUpdate = true; G3.beamGeo.computeBoundingSphere();
+  G3.beamEdgeGeo.attributes.position.needsUpdate = true; G3.beamEdgeGeo.computeBoundingSphere();
+  // couch + tank
+  G3.couchT.position.set(st.lat, 0, st.lng);
+  G3.couchTop.position.set(0, cY - 2.5, 95);
+  const pedH = Math.max(4, cY - 5 - (-120));
+  G3.ped.scale.y = pedH; G3.ped.position.set(0, -120 + pedH / 2, 150);
+  G3.tank.position.set(0, cY, 0);
+  // chamber
+  const yc = 40.5 - st.depth;
+  const pr = st.probe || { x: 0, z: 0, d: st.depth };
+  const ycp = 40.5 - pr.d;
+  G3.probe.position.set(pr.x, ycp, pr.z);
+  const rodTop = 47, rodLen = rodTop - ycp;
+  G3.holder.scale.y = Math.max(rodLen, 0.1); G3.holder.position.set(0, rodLen / 2, 9.3);
+  if (G3.cable) { G3.tank.remove(G3.cable); G3.cable.geometry.dispose(); }
+  const pts = [new THREE.Vector3(pr.x, rodTop, pr.z + 9.3), new THREE.Vector3(pr.x * 0.5, rodTop + 6, 20), new THREE.Vector3(0, 46, 27), new THREE.Vector3(0, 30, 31), new THREE.Vector3(6, 4, 38)];
+  G3.cable = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 40, 0.45, 8, false), G3.M.cable); G3.tank.add(G3.cable);
+  void yc;
+  // light field on the water surface (projection of the collimator field)
+  const s = st.ssd / 100, hx = st.fx / 2 * s, hz = st.fy / 2 * s, y = sY + 0.12;
+  const lf = [-hx, y, -hz, hx, y, -hz, hx, y, -hz, hx, y, hz, hx, y, hz, -hx, y, hz, -hx, y, hz, -hx, y, -hz,
+    -hx, y, 0, hx, y, 0, 0, y, -hz, 0, y, hz];
+  G3.lightField.geometry.dispose(); G3.lightField.geometry = new THREE.BufferGeometry(); G3.lightField.geometry.setAttribute("position", new THREE.Float32BufferAttribute(lf, 3));
+  G3.lightField.position.set(0, 0, 0);
+  G3.lightFill.scale.set(2 * hx, 2 * hz, 1); G3.lightFill.position.set(0, y - 0.02, 0);
+  // lasers on the tank walls (isocentre lasers: horizontal at y = 0, sagittal x = 0, coronal z = 0)
+  const L = []; const off = { x: st.lat, z: st.lng };
+  const yb = cY, yt = cY + 44, xL = off.x - 21.05, xR = off.x + 21.05, zF = off.z + 21.05, zB = off.z - 21.05;
+  if (st.lasers && Math.abs(st.act.couch) < 0.05) {
+    if (0 > yb && 0 < yt) L.push(xL, 0, zB, xL, 0, zF, xR, 0, zB, xR, 0, zF, xL, 0, zF, xR, 0, zF);
+    L.push(0, yb, zF, 0, yt, zF);       // sagittal on the front wall
+    L.push(xL, yb, 0, xL, yt, 0, xR, yb, 0, xR, yt, 0); // coronal on side walls
+    L.push(0, sY + 0.08, zB, 0, sY + 0.08, zF, xL, sY + 0.08, 0, xR, sY + 0.08, 0); // ceiling laser on the water surface
+  }
+  G3.lasers.geometry.dispose(); G3.lasers.geometry = new THREE.BufferGeometry(); G3.lasers.geometry.setAttribute("position", new THREE.Float32BufferAttribute(L, 3));
+  // ODI read-out on the surface
+  const g = G3.odiCanvas.getContext("2d"); g.clearRect(0, 0, 256, 64);
+  g.fillStyle = "rgba(10,16,18,0.65)"; g.fillRect(0, 8, 256, 48); g.fillStyle = "#fff1a8"; g.font = "600 32px 'JetBrains Mono', monospace"; g.textAlign = "center"; g.textBaseline = "middle";
+  g.fillText("ODI " + st.ssd.toFixed(1), 128, 33); G3.odiTex.needsUpdate = true;
+  G3.odi.position.set(off.x - 20, sY + 6, off.z + 26);
+  applyMotion();
+}
+let washTimer = null;
+function updateWash() {
+  if (!G3.ok) return;
+  clearTimeout(washTimer);
+  washTimer = setTimeout(() => {
+    const { WW, WH, washData } = G3; const p = Beam.E[st.energy];
+    const vals = new Float32Array(WW * WH); let mx = 0;
+    for (let j = 0; j < WH; j++) {
+      const d = 40 * (1 - j / (WH - 1));
+      for (let i = 0; i < WW; i++) {
+        const x = -20 + 40 * i / (WW - 1);
+        const v = Beam.rel(p, x + st.lat, st.lng, d, st.fx, st.fy, st.ssd); vals[j * WW + i] = v; if (v > mx) mx = v;
+      }
+    }
+    for (let k = 0; k < vals.length; k++) {
+      const t = vals[k] / mx; const [r, g, b] = cmap(t);
+      washData[k * 4] = r; washData[k * 4 + 1] = g; washData[k * 4 + 2] = b; washData[k * 4 + 3] = t < 0.04 ? 0 : Math.round(255 * Math.min(0.62, 0.15 + 0.6 * t));
+    }
+    G3.washTex.needsUpdate = true;
+  }, 40);
+}
+function cmap(t) {
+  const S = [[0, [20, 40, 160]], [0.2, [40, 110, 255]], [0.4, [40, 210, 230]], [0.6, [70, 220, 90]], [0.75, [250, 230, 60]], [0.9, [255, 140, 30]], [1, [235, 40, 40]]];
+  t = clamp(t, 0, 1);
+  for (let i = 1; i < S.length; i++) if (t <= S[i][0]) { const [t0, c0] = S[i - 1], [t1, c1] = S[i]; const u = (t - t0) / (t1 - t0); return c0.map((c, k) => Math.round(c + (c1[k] - c) * u)); }
+  return S[S.length - 1][1];
+}
+
+/* ============================== HUD / sync ============================== */
+function updateHUD() {
+  $("hEnergy").textContent = Beam.E[st.energy].label;
+  $("hGantry").textContent = st.act.gantry.toFixed(1) + "°";
+  $("hColl").textContent = st.act.coll.toFixed(1) + "°";
+  $("hCouch").textContent = st.act.couch.toFixed(1) + "°";
+  $("hField").textContent = st.fx.toFixed(1) + " × " + st.fy.toFixed(1) + " cm";
+  $("hSSD").textContent = st.ssd.toFixed(1) + " cm";
+  $("hDepth").textContent = st.depth.toFixed(1) + " cm";
+  $("hSCD").textContent = (st.ssd + st.depth).toFixed(1) + " cm";
+  $("muSet").textContent = st.mu;
+}
+function updateStatus() {
+  const r = interlock();
+  const lamp = $("lampLock");
+  lamp.className = "lamp on " + (r ? "amber" : "green");
+  $("lockTxt").textContent = r ? "Interlock" : "All interlocks on";
+  lamp.title = r || "Ready";
+  if (!st.busy) $("beamMsg").textContent = r ? r.split(" — ")[0] : "Ready — press Beam On";
+  renderConsole(true);
+}
+function syncInputs() {
+  $("cEnergy").value = st.energy; $("cDet").value = st.detector;
+  $("cFx").value = +st.fx.toFixed(2); $("cFy").value = +st.fy.toFixed(2);
+  $("cSSD").value = +st.ssd.toFixed(2); $("cDepth").value = +st.depth.toFixed(2); $("cMU").value = st.mu;
+  $("cFy").disabled = st.vert; $("cMU").disabled = st.vert;
+  qsa("#depthPresets .chip").forEach((b) => b.classList.toggle("active", Math.abs(+b.dataset.d - st.depth) < 1e-6));
+}
+function setGeom(p, opts = {}) {
+  if (p.energy) st.energy = p.energy;
+  if (p.detector) st.detector = p.detector;
+  if (p.fx !== undefined) st.fx = clamp(+p.fx, 0.5, 40);
+  if (p.fy !== undefined) st.fy = clamp(+p.fy, 0.5, 40);
+  if (st.vert) st.fy = st.fx;
+  if (p.ssd !== undefined) st.ssd = clamp(+p.ssd, 60, 140);
+  if (p.depth !== undefined) st.depth = clamp(+p.depth, 0, 38);
+  if (p.mu !== undefined) st.mu = st.vert ? 100 : clamp(Math.round(+p.mu), 1, 999);
+  for (const k of ["gantry", "coll", "couch"]) if (p[k] !== undefined) st[k] = ((+p[k] % 360) + 540) % 360 - 180;
+  for (const k of ["lat", "lng"]) if (p[k] !== undefined) st[k] = clamp(+p[k], -15, 15);
+  if (!opts.noSync) syncInputs();
+  rebuildScene(); updateWash(); updateHUD(); updateStatus(); updateCalNote();
+}
+
+/* ============================== beam on ============================== */
+async function beamOn(mu, ms) {
+  st.beamOn = true; document.body.classList.add("beam-on"); $("lampBeam").className = "lamp on red";
+  applyMotion();
+  $("beamMsg").textContent = "BEAM ON — radiation";
+  const t0 = performance.now(); const dur = reduceMotion ? Math.min(ms, 120) : ms;
+  while (true) {
+    const u = Math.min(1, (performance.now() - t0) / dur);
+    $("muNow").textContent = Math.round(u * mu); $("muBar").style.width = (u * 100) + "%";
+    if (u >= 1) break; await sleep(16);
+  }
+  st.beamOn = false; document.body.classList.remove("beam-on"); $("lampBeam").className = "lamp";
+  applyMotion(); $("beamMsg").textContent = "Beam complete — " + mu + " MU delivered";
+}
+
+/* ============================== ion chamber page ============================== */
+const log = [];
+const setupKey = () => [st.energy, st.fx, st.fy, st.ssd, st.depth, st.detector, st.mu, st.lat, st.lng].join("|");
+function updateCalNote() {
+  const isCal = st.ssd === 95 && st.depth === 5 && st.fx === 10 && st.fy === 10 && st.mu === 100;
+  $("calNote").hidden = !isCal;
+  refreshStats();
+}
+function refreshStats() {
+  const key = setupKey(); const vals = log.filter((r) => r.key === key).map((r) => r.dose);
+  $("sN").textContent = vals.length; $("sMean").textContent = vals.length ? fx(mean(vals), 2) : "—"; $("sSD").textContent = vals.length > 1 ? fx(sdev(vals), 3) : "—";
+}
+async function chamberMeasure() {
+  if (st.busy) return;
+  const r = interlock(); if (r) { toast(r); return; }
+  st.busy = true; $("beamBtn").disabled = true;
+  await beamOn(st.mu, 1500);
+  const d = readDose();
+  log.push({ key: setupKey(), energy: Beam.E[st.energy].label, fld: st.fx + " × " + st.fy, ssd: st.ssd, depth: st.depth, det: st.detector, dose: d });
+  $("doseBig").innerHTML = (d / 100).toFixed(3) + "<small>Gy</small>";
+  const off = chamberOffset();
+  $("doseSub").textContent = d.toFixed(2) + " cGy · " + Beam.E[st.energy].label + " · " + st.fx + "×" + st.fy + " cm · SSD " + st.ssd + " · d " + st.depth + " cm" + (Math.hypot(off.x, off.y) > 0.01 ? " · off-axis " + off.x.toFixed(1) + ", " + off.y.toFixed(1) + " cm" : "");
+  renderLog(); refreshStats();
+  if (!$("calNote").hidden) {
+    const dev = (d - 100) / 100 * 100;
+    $("calNote").textContent = "Calibration check: reading " + d.toFixed(2) + " cGy → " + (dev >= 0 ? "+" : "") + dev.toFixed(2) + "% from 100 cGy — " + (Math.abs(dev) <= 2 ? "PASS (within ±2%)" : "CHECK");
+  }
+  st.busy = false; $("beamBtn").disabled = false;
+}
+function renderLog() {
+  const tb = qs("#logTable tbody");
+  tb.innerHTML = log.slice().reverse().map((r, i) => `<tr><td>${log.length - i}</td><td>${r.energy}</td><td>${r.fld}</td><td>${r.ssd}</td><td>${r.depth}</td><td>${r.det}</td><td>${r.dose.toFixed(2)}</td></tr>`).join("");
+}
+
+/* ============================== scanner ============================== */
+const SCOL = ["#e8b923", "#74d14c", "#5aa9ff", "#ff7a6e", "#c79bff"];
+let scanChart = null; const series = [];
+function scanType() { return qs('input[name="scanType"]:checked').value; }
+function ensureScanChart() {
+  if (scanChart || typeof Chart === "undefined") return;
+  const dmaxLine = { id: "dmaxLine", afterDatasetsDraw(c) {
+    const s = series.filter((q) => q.type === "pdd"); if (!s.length) return;
+    const last = s[s.length - 1]; const x = c.scales.x.getPixelForValue(last.dmax);
+    const { top, bottom } = c.chartArea; const g = c.ctx; g.save(); g.strokeStyle = "#ff5a4c"; g.lineWidth = 1.5; g.beginPath(); g.moveTo(x, top); g.lineTo(x, bottom); g.stroke(); g.restore();
+  } };
+  scanChart = new Chart($("scanChart"), {
+    type: "line", data: { datasets: [] }, plugins: [dmaxLine],
+    options: { animation: false, maintainAspectRatio: false, parsing: false, normalized: true,
+      interaction: { mode: "nearest", axis: "x", intersect: false },
+      scales: {
+        x: { type: "linear", title: { display: true, text: "Depth (mm)", color: "#94a7ae" }, ticks: { color: "#94a7ae" }, grid: { color: "#26333a" } },
+        y: { title: { display: true, text: "Percent depth dose (%)", color: "#94a7ae" }, ticks: { color: "#94a7ae" }, grid: { color: "#26333a" }, min: 0 },
+      },
+      plugins: { legend: { labels: { color: "#e6eef0", boxWidth: 14 } },
+        tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)} at ${ctx.parsed.x.toFixed(1)} mm` } } },
+      elements: { point: { radius: 0, hitRadius: 6 }, line: { borderWidth: 2, tension: 0 } } },
+  });
+}
+function scanSettings() {
+  const e = $("sEnergy").value, fxv = +$("sFx").value / 10, fyv = (st.vert ? +$("sFx").value : +$("sFy").value) / 10, ssd = +$("sSSD").value;
+  return { energy: e, fx: clamp(fxv, 0.5, 40), fy: clamp(fyv, 0.5, 40), ssd: clamp(ssd, 60, 140), det: $("sDet").value, type: scanType() };
+}
+async function runScan() {
+  if (st.busy) return;
+  const s = scanSettings();
+  setGeom({ energy: s.energy, fx: s.fx, fy: s.fy, ssd: s.ssd });
+  const r = interlock(); if (r) { toast(r); return; }
+  if (series.length && series[0].type !== s.type && !(series[0].type !== "pdd" && s.type !== "pdd")) { series.length = 0; toast("New scan type — previous curves cleared", true); }
+  if (series.length >= 5) series.shift();
+  const pts = [];
+  if (s.type === "pdd") {
+    const a = clamp(+$("sFrom").value, 0, 380), b = clamp(+$("sTo").value, 1, 380), step = clamp(+$("sStep").value, 0.5, 50);
+    for (let z = a; z <= b + 1e-9; z += step) pts.push(z);
+  } else {
+    const len = clamp(+$("sLen").value, 20, 600), off = clamp(+$("sOff").value, -200, 200), step = clamp(+$("sPStep").value, 0.5, 20);
+    for (let x = -len / 2; x <= len / 2 + 1e-9; x += step) pts.push(x + off);
+  }
+  if (pts.length > 2000) { toast("Too many points — increase the step size"); return; }
+  st.busy = true; $("scanBtn").disabled = true;
+  const pdep = clamp(+$("sPDepth").value, 0, 380) / 10;
+  // animate the probe along the scan path while the beam is on
+  const beamP = beamOn(100, Math.min(2600, 600 + pts.length * 2));
+  const t0 = performance.now(); const T = Math.min(2400, 500 + pts.length * 2);
+  while (performance.now() - t0 < T) {
+    const u = (performance.now() - t0) / T; const v = pts[Math.min(pts.length - 1, Math.floor(u * pts.length))];
+    st.probe = s.type === "pdd" ? { x: 0, z: 0, d: v / 10 } : s.type === "cross" ? { x: v / 10, z: 0, d: pdep } : { x: 0, z: v / 10, d: pdep };
+    rebuildScene(); await sleep(30);
+  }
+  await beamP; st.probe = null; rebuildScene();
+  const ys = pts.map((v) => {
+    const o = { energy: s.energy, fx: s.fx, fy: s.fy, ssd: s.ssd, mu: 100, detector: s.det, scan: true };
+    if (s.type === "pdd") return readDose({ ...o, depth: v / 10 });
+    if (s.type === "cross") return readDose({ ...o, depth: pdep, x: v / 10 });
+    return readDose({ ...o, depth: pdep, y: v / 10 });
+  });
+  const ser = { type: s.type, label: `${Math.round(s.fx * 10)}x${Math.round(s.fy * 10)},${Beam.E[s.energy].label.replace(" ", "")}${s.type === "pdd" ? "" : " " + s.type + " d" + Math.round(pdep * 10)}`, xs: pts, ys, s, pdep };
+  analyseSeries(ser); series.push(ser); drawScan(); renderScanTable();
+  st.busy = false; $("scanBtn").disabled = false;
+}
+function interpCross(xs, ys, level, fromLeft) {
+  if (fromLeft) { for (let i = 1; i < xs.length; i++) if (ys[i - 1] < level && ys[i] >= level) return xs[i - 1] + (level - ys[i - 1]) * (xs[i] - xs[i - 1]) / (ys[i] - ys[i - 1]); }
+  else { for (let i = xs.length - 1; i > 0; i--) if (ys[i] < level && ys[i - 1] >= level) return xs[i] + (level - ys[i]) * (xs[i - 1] - xs[i]) / (ys[i - 1] - ys[i]); }
+  return NaN;
+}
+function analyseSeries(q) {
+  const { xs, ys } = q;
+  if (q.type === "pdd") {
+    let im = 0; ys.forEach((v, i) => { if (v > ys[im]) im = i; });
+    q.norm = ys[im]; q.dmax = xs[im]; q.rel = ys.map((v) => v / q.norm * 100);
+    const at = (mm) => { for (let i = 1; i < xs.length; i++) if (xs[i] >= mm) { const u = (mm - xs[i - 1]) / (xs[i] - xs[i - 1]); return q.rel[i - 1] + u * (q.rel[i] - q.rel[i - 1]); } return NaN; };
+    q.m = { dmax: q.dmax, surf: xs[0] === 0 ? q.rel[0] : NaN, p50: at(50), p100: at(100), p200: at(200) };
+    q.m.ratio = q.m.p200 / q.m.p100;
+  } else {
+    let i0 = 0; xs.forEach((x, i) => { if (Math.abs(x) < Math.abs(xs[i0])) i0 = i; });
+    q.norm = Math.abs(xs[i0]) < 2 ? ys[i0] : Math.max(...ys); q.rel = ys.map((v) => v / q.norm * 100);
+    const L50 = interpCross(xs, q.rel, 50, true), R50 = interpCross(xs, q.rel, 50, false);
+    const L80 = interpCross(xs, q.rel, 80, true), L20 = interpCross(xs, q.rel, 20, true), R80 = interpCross(xs, q.rel, 80, false), R20 = interpCross(xs, q.rel, 20, false);
+    const W = R50 - L50, c = (R50 + L50) / 2, lo = c - 0.4 * W, hi = c + 0.4 * W;
+    const inn = xs.map((x, i) => [x, q.rel[i]]).filter(([x]) => x >= lo && x <= hi).map(([, v]) => v);
+    const flat = inn.length ? (Math.max(...inn) - Math.min(...inn)) / (Math.max(...inn) + Math.min(...inn)) * 100 : NaN;
+    let sym = 0; const relAt = (x) => { for (let i = 1; i < xs.length; i++) if (xs[i] >= x) { const u = (x - xs[i - 1]) / (xs[i] - xs[i - 1]); return q.rel[i - 1] + u * (q.rel[i] - q.rel[i - 1]); } return NaN; };
+    for (let x = 0; x <= 0.4 * W; x += Math.max(1, W / 100)) { const a = relAt(c + x), b = relAt(c - x); if (!Number.isNaN(a) && !Number.isNaN(b)) sym = Math.max(sym, Math.abs(a - b) / ((a + b) / 2) * 100); }
+    q.m = { width: W, penL: L80 - L20, penR: R20 - R80, flat, sym, cax: c };
+  }
+}
+function drawScan() {
+  ensureScanChart(); if (!scanChart) return;
+  const abs = $("sNorm").value === "abs";
+  const t = series.length ? series[series.length - 1].type : scanType();
+  scanChart.options.scales.x.title.text = t === "pdd" ? "Depth (mm)" : (t === "cross" ? "Crossline position (mm)" : "Inline position (mm)");
+  scanChart.options.scales.y.title.text = abs ? "Dose (cGy per 100 MU)" : (t === "pdd" ? "Percent depth dose (%)" : "Relative dose to CAX (%)");
+  scanChart.data.datasets = series.map((q, i) => ({ label: q.label, data: q.xs.map((x, k) => ({ x, y: abs ? q.ys[k] : q.rel[k] })), borderColor: SCOL[i % 5], backgroundColor: SCOL[i % 5] }));
+  scanChart.update();
+}
+function renderScanTable() {
+  const th = qs("#scanTable thead"), tb = qs("#scanTable tbody");
+  if (!series.length) { th.innerHTML = ""; tb.innerHTML = '<tr><td class="hint">No scans yet — press Measure.</td></tr>'; return; }
+  if (series[series.length - 1].type === "pdd") {
+    th.innerHTML = "<tr><th>Series</th><th>d<sub>max</sub> (mm)</th><th>Surface (%)</th><th>PDD 50 mm</th><th>PDD 100 mm</th><th>PDD 200 mm</th><th>PDD<sub>20</sub>/PDD<sub>10</sub></th></tr>";
+    tb.innerHTML = series.filter((q) => q.type === "pdd").map((q) => `<tr><td style="color:${SCOL[series.indexOf(q) % 5]}">${q.label}</td><td>${fx(q.m.dmax, 1)}</td><td>${fx(q.m.surf, 1)}</td><td>${fx(q.m.p50, 1)}</td><td>${fx(q.m.p100, 1)}</td><td>${fx(q.m.p200, 1)}</td><td>${fx(q.m.ratio, 3)}</td></tr>`).join("");
+  } else {
+    th.innerHTML = "<tr><th>Series</th><th>Width 50% (mm)</th><th>Penumbra L (mm)</th><th>Penumbra R (mm)</th><th>Flatness (%)</th><th>Symmetry (%)</th></tr>";
+    tb.innerHTML = series.filter((q) => q.type !== "pdd").map((q) => `<tr><td style="color:${SCOL[series.indexOf(q) % 5]}">${q.label}</td><td>${fx(q.m.width, 1)}</td><td>${fx(q.m.penL, 1)}</td><td>${fx(q.m.penR, 1)}</td><td>${fx(q.m.flat, 2)}</td><td>${fx(q.m.sym, 2)}</td></tr>`).join("");
+  }
+}
+function scanTSV() {
+  if (!series.length) return "";
+  const n = Math.max(...series.map((q) => q.xs.length));
+  const head = series.map((q) => `${q.label} position (mm)\t${q.label} relative (%)\t${q.label} dose (cGy)`).join("\t");
+  const rows = []; for (let i = 0; i < n; i++) rows.push(series.map((q) => i < q.xs.length ? `${q.xs[i]}\t${q.rel[i].toFixed(2)}\t${q.ys[i].toFixed(3)}` : "\t\t").join("\t"));
+  return head + "\n" + rows.join("\n");
+}
+
+/* ============================== lab tasks ============================== */
+const TASKS = [
+  { id: 1, title: "Output calibration check", sub: "SSD 95 · d 5 cm · 10×10 · expect 100 cGy",
+    points: [{ label: "Calibration", ssd: 95, depth: 5, fx: 10 }], key: "label", exp: () => 100 },
+  { id: 2, title: "Effect of depth (PDD)", sub: "SSD 100 · 10×10 · depth 0.5–20 cm",
+    points: [0.5, 1, 1.5, 2, 5, 7, 10, 15, 20].map((d) => ({ label: d, ssd: 100, depth: d, fx: 10 })), key: "depth" },
+  { id: 3, title: "Effect of SSD (inverse square)", sub: "d 5 cm · 10×10 · SSD 70–120 cm",
+    points: [70, 80, 90, 95, 100, 110, 120].map((s) => ({ label: s, ssd: s, depth: 5, fx: 10 })), key: "ssd", exp: (p) => 100 * (100 / (p.ssd + 5)) ** 2 },
+  { id: 4, title: "Effect of field size (scatter)", sub: "SSD 100 · d 5 cm · 4–20 cm square",
+    points: [4, 6, 8, 10, 15, 20].map((f) => ({ label: f, ssd: 100, depth: 5, fx: f })), key: "fx" },
+  { id: 5, title: "Beam quality TPR20/10", sub: "SCD 100 · d 10 (SSD 90) and d 20 (SSD 80)",
+    points: [{ label: 10, ssd: 90, depth: 10, fx: 10 }, { label: 20, ssd: 80, depth: 20, fx: 10 }], key: "depth" },
+  { id: 6, title: "Uncorrected charge reading R", sub: "Equation 1 & 2 · T 18 °C · P 1018 mbar", points: [] },
+];
+const RES = {}; // id -> array of {p, r:[...]}
+let taskCharts = {};
+function buildTasks() {
+  $("taskList").innerHTML = TASKS.map((t) => `
+    <details class="task" id="task${t.id}" ${t.id === 1 ? "open" : ""}>
+      <summary><span class="num">${t.id}</span><span><span class="t">${t.title.replace("TPR20/10", "TPR<sub>20/10</sub>")}</span><br><span class="s">${t.sub}</span></span><span class="state" id="tst${t.id}">Not run</span></summary>
+      <div class="body">
+        ${t.id === 6 ? "" : `<div class="btns"><button class="btn" data-setup-task="${t.id}">Set up linac</button><button class="btn primary" data-run-task="${t.id}">Run · 3 readings per point</button><button class="btn sm" data-copy-task="${t.id}">Copy readings for Excel</button></div>`}
+        <div class="tablewrap"><table id="tt${t.id}"></table></div>
+        ${[2, 3, 4].includes(t.id) ? `<div class="chartbox sm"><canvas id="tc${t.id}"></canvas></div>` : ""}
+        <dl class="kv" id="tk${t.id}"></dl>
+      </div>
+    </details>`).join("");
+  TASKS.forEach((t) => renderTask(t.id));
+}
+function rowsFor(id) {
+  const t = TASKS[id - 1]; const res = RES[id] || [];
+  return t.points.map((p, i) => ({ p, r: (res[i] && res[i].r) || [] }));
+}
+function renderTask(id) {
+  const t = TASKS[id - 1]; const rows = rowsFor(id); const tab = $("tt" + id), kv = $("tk" + id);
+  const m = (r) => r.length ? mean(r) : NaN, s = (r) => r.length > 1 ? sdev(r) : NaN;
+  const cls = (dev, a, b) => Number.isNaN(dev) ? "" : (Math.abs(dev) <= a ? "good" : Math.abs(dev) <= b ? "warn" : "bad");
+  if (id === 1) {
+    tab.innerHTML = "<thead><tr><th>Point</th><th>R1</th><th>R2</th><th>R3</th><th>Mean (cGy)</th><th>SD</th><th>Expected</th><th>Diff (%)</th></tr></thead><tbody>" + rows.map(({ p, r }) => {
+      const mm = m(r), dev = (mm - 100); return `<tr><td>${p.label}</td>${[0, 1, 2].map((k) => `<td>${fx(r[k])}</td>`).join("")}<td>${fx(mm)}</td><td>${fx(s(r), 3)}</td><td>100.00</td><td class="${cls(dev, 2, 5)}">${Number.isNaN(dev) ? "—" : (dev >= 0 ? "+" : "") + dev.toFixed(2)}</td></tr>`;
+    }).join("") + "</tbody>";
+    const mm = m(rows[0].r);
+    kv.innerHTML = Number.isNaN(mm) ? "" : `<dt>Report as</dt><dd class="em">${fx(mm)} ± ${fx(s(rows[0].r), 2)} cGy</dd><dt>Within ±2% of 1 Gy?</dt><dd>${Math.abs(mm - 100) <= 2 ? "Yes — PASS" : "No — CHECK"}</dd>`;
+  }
+  if (id === 2) {
+    const means = rows.map(({ r }) => m(r)); const mx = Math.max(...means.filter((v) => !Number.isNaN(v)), 0);
+    tab.innerHTML = "<thead><tr><th>Depth (cm)</th><th>R1</th><th>R2</th><th>R3</th><th>Mean (cGy)</th><th>SD</th><th>PDD (%)</th><th>Typical (%)</th><th>Diff</th></tr></thead><tbody>" + rows.map(({ p, r }, i) => {
+      const pdd = mx ? means[i] / mx * 100 : NaN, typ = TYP_PDD[p.depth], dev = pdd - typ;
+      return `<tr><td>${p.depth}</td>${[0, 1, 2].map((k) => `<td>${fx(r[k])}</td>`).join("")}<td>${fx(means[i])}</td><td>${fx(s(r), 3)}</td><td>${fx(pdd, 1)}</td><td>${typ}</td><td class="${cls(dev, 2, 5)}">${Number.isNaN(dev) ? "—" : (dev >= 0 ? "+" : "") + dev.toFixed(1)}</td></tr>`;
+    }).join("") + "</tbody>";
+    if (mx) {
+      const i10 = rows.findIndex((q) => q.p.depth === 10), i20 = rows.findIndex((q) => q.p.depth === 20), im = means.indexOf(mx);
+      kv.innerHTML = `<dt>d<sub>max</sub> (measured points)</dt><dd class="em">${rows[im].p.depth} cm</dd><dt>PDD at 10 cm</dt><dd>${fx(means[i10] / mx * 100, 1)} %</dd><dt>PDD<sub>20</sub>/PDD<sub>10</sub></dt><dd>${fx(means[i20] / means[i10], 3)}</dd>`;
+    }
+    taskChart(2, rows.map(({ p }, i) => ({ x: p.depth, y: mx ? means[i] / mx * 100 : null })), rows.map(({ p }) => ({ x: p.depth, y: TYP_PDD[p.depth] })), "Depth (cm)", "PDD (%)", "Typical 6 MV");
+  }
+  if (id === 3) {
+    tab.innerHTML = "<thead><tr><th>SSD (cm)</th><th>r (cm)</th><th>R1</th><th>R2</th><th>R3</th><th>Mean</th><th>SD</th><th>ISL expected</th><th>Diff (%)</th></tr></thead><tbody>" + rows.map(({ p, r }) => {
+      const e = t.exp(p), mm = m(r), dev = (mm / e - 1) * 100;
+      return `<tr><td>${p.ssd}</td><td>${p.ssd + 5}</td>${[0, 1, 2].map((k) => `<td>${fx(r[k])}</td>`).join("")}<td>${fx(mm)}</td><td>${fx(s(r), 3)}</td><td>${fx(e)}</td><td class="${cls(dev, 2, 5)}">${Number.isNaN(dev) ? "—" : (dev >= 0 ? "+" : "") + dev.toFixed(2)}</td></tr>`;
+    }).join("") + "</tbody>";
+    const devs = rows.map(({ p, r }) => (m(r) / t.exp(p) - 1) * 100).filter((v) => !Number.isNaN(v));
+    kv.innerHTML = devs.length ? `<dt>Largest deviation from 1/r²</dt><dd class="em">${fx(Math.max(...devs.map(Math.abs)), 2)} %</dd><dt>Why</dt><dd style="white-space:normal;text-align:right">field at chamber grows 7.5→12.5 cm → more scatter</dd>` : "";
+    taskChart(3, rows.map(({ p, r }) => ({ x: p.ssd, y: r.length ? m(r) : null })), Array.from({ length: 31 }, (_, k) => { const ssd = 65 + k * 2; return { x: ssd, y: 100 * (100 / (ssd + 5)) ** 2 }; }), "SSD (cm)", "Dose (cGy)", "Inverse square law");
+  }
+  if (id === 4) {
+    const i10 = rows.findIndex((q) => q.p.fx === 10); const ref = m(rows[i10].r);
+    tab.innerHTML = "<thead><tr><th>Field (cm)</th><th>R1</th><th>R2</th><th>R3</th><th>Mean</th><th>SD</th><th>Output factor</th><th>Typical</th><th>Diff (%)</th></tr></thead><tbody>" + rows.map(({ p, r }) => {
+      const of = m(r) / ref, typ = TYP_OF[p.fx], dev = (of / typ - 1) * 100;
+      return `<tr><td>${p.fx} × ${p.fx}</td>${[0, 1, 2].map((k) => `<td>${fx(r[k])}</td>`).join("")}<td>${fx(m(r))}</td><td>${fx(s(r), 3)}</td><td>${fx(of, 3)}</td><td>${typ.toFixed(2)}</td><td class="${cls(dev, 2, 5)}">${Number.isNaN(dev) ? "—" : (dev >= 0 ? "+" : "") + dev.toFixed(1)}</td></tr>`;
+    }).join("") + "</tbody>";
+    const ofs = rows.map(({ r }) => m(r) / ref).filter((v) => !Number.isNaN(v));
+    kv.innerHTML = ofs.length > 1 ? `<dt>Output factor range</dt><dd class="em">${fx(Math.min(...ofs), 3)} → ${fx(Math.max(...ofs), 3)}</dd>` : "";
+    taskChart(4, rows.map(({ p, r }) => ({ x: p.fx, y: r.length && ref ? m(r) / ref : null })), rows.map(({ p }) => ({ x: p.fx, y: TYP_OF[p.fx] })), "Square field side (cm)", "Output factor", "Typical 6 MV");
+  }
+  if (id === 5) {
+    tab.innerHTML = "<thead><tr><th>Depth (cm)</th><th>SSD</th><th>R1</th><th>R2</th><th>R3</th><th>Mean (cGy)</th><th>SD</th></tr></thead><tbody>" + rows.map(({ p, r }) =>
+      `<tr><td>${p.depth}</td><td>${p.ssd}</td>${[0, 1, 2].map((k) => `<td>${fx(r[k])}</td>`).join("")}<td>${fx(m(r))}</td><td>${fx(s(r), 3)}</td></tr>`).join("") + "</tbody>";
+    const D10 = m(rows[0].r), D20 = m(rows[1].r);
+    if (!Number.isNaN(D10) && !Number.isNaN(D20)) {
+      const tpr = D20 / D10, s10 = s(rows[0].r) || 0, s20 = s(rows[1].r) || 0, u = tpr * Math.sqrt((s20 / D20) ** 2 + (s10 / D10) ** 2);
+      const npl = NPL_TPR[RES.energy5 || "6MV"];
+      kv.innerHTML = `<dt>TPR<sub>20/10</sub> = D20 ÷ D10</dt><dd class="em">${tpr.toFixed(3)} ± ${u.toFixed(3)}</dd><dt>NPL Elekta reference</dt><dd>${npl.toFixed(3)}</dd><dt>Difference from NPL</dt><dd>${((tpr / npl - 1) * 100).toFixed(2)} %</dd><dt>Equivalent energy (BJR 17)</dt><dd>${fx(bjrMV(tpr), 1)} MV</dd>`;
+      $("bD10").dataset.v = D10.toFixed(2); $("bD20").dataset.v = D20.toFixed(2);
+    } else kv.innerHTML = "";
+  }
+  if (id === 6) {
+    const T = +$("eT").value, P = pressureMbar(), CF = +$("eCF").value, pion = +$("bPion").value, k = Beam.kTP(T, P), F = CF * pion * k;
+    const r5 = rowsFor(5), D10 = r5[0].r.length ? mean(r5[0].r) : NaN, D20 = r5[1].r.length ? mean(r5[1].r) : NaN;
+    tab.innerHTML = `<thead><tr><th>Step</th><th>Calculation</th><th>Result</th></tr></thead><tbody>
+      <tr><td>Temperature factor</td><td>(273.15 + ${T}) ÷ 293.15</td><td>${((273.15 + T) / 293.15).toFixed(5)}</td></tr>
+      <tr><td>Pressure factor</td><td>1013.25 ÷ ${P.toFixed(2)}</td><td>${(1013.25 / P).toFixed(5)}</td></tr>
+      <tr class="hl"><td>k<sub>TP</sub></td><td>product</td><td>${k.toFixed(4)}</td></tr>
+      <tr><td>Total factor F</td><td>${CF} × ${pion} × ${k.toFixed(4)}</td><td>${F.toFixed(4)} cGy/nC</td></tr>
+      <tr class="hl"><td>R<sub>10</sub></td><td>${fx(D10)} ÷ ${F.toFixed(4)}</td><td>${fx(D10 / F)} nC</td></tr>
+      <tr class="hl"><td>R<sub>20</sub></td><td>${fx(D20)} ÷ ${F.toFixed(4)}</td><td>${fx(D20 / F)} nC</td></tr>
+      <tr><td>Check R<sub>20</sub>/R<sub>10</sub></td><td>= TPR<sub>20/10</sub></td><td>${fx((D20 / F) / (D10 / F), 3)}</td></tr></tbody>`;
+    kv.innerHTML = Number.isNaN(D10) ? '<dt>Needs Task 5</dt><dd>run Task 5 first</dd>' : '<dt>Status</dt><dd class="em">calculated from Task 5</dd>';
+  }
+  const done = id === 6 ? rowsFor(5).every((q) => q.r.length) : rows.length && rows.every((q) => q.r.length >= 3);
+  $("task" + id).classList.toggle("done", !!done); $("tst" + id).textContent = done ? "Done" : (rows.some((q) => q.r.length) ? "In progress" : "Not run");
+}
+function taskChart(id, meas, exp, xt, yt, expLabel) {
+  if (typeof Chart === "undefined") return;
+  const ds = [{ label: "Simulated measurement", data: meas, borderColor: "#38c4b6", backgroundColor: "#38c4b6", showLine: true, pointRadius: 4, borderWidth: 2 },
+    { label: expLabel, data: exp, borderColor: "#f0bf4c", backgroundColor: "#f0bf4c", borderDash: [6, 4], pointRadius: id === 3 ? 0 : 3, showLine: true, borderWidth: 1.5 }];
+  if (taskCharts[id]) { taskCharts[id].data.datasets = ds; taskCharts[id].update(); return; }
+  const el = $("tc" + id); if (!el) return;
+  taskCharts[id] = new Chart(el, { type: "scatter", data: { datasets: ds }, options: { animation: false, maintainAspectRatio: false,
+    scales: { x: { title: { display: true, text: xt, color: "#94a7ae" }, ticks: { color: "#94a7ae" }, grid: { color: "#26333a" } },
+      y: { title: { display: true, text: yt, color: "#94a7ae" }, ticks: { color: "#94a7ae" }, grid: { color: "#26333a" } } },
+    plugins: { legend: { labels: { color: "#e6eef0", boxWidth: 12 } } } } });
+}
+async function runTask(id, fast) {
+  const t = TASKS[id - 1]; if (!t.points.length) { renderTask(6); return; }
+  RES[id] = t.points.map(() => ({ r: [] }));
+  if (id === 5) RES.energy5 = st.energy;
+  $("task" + id).open = true;
+  for (let i = 0; i < t.points.length; i++) {
+    const p = t.points[i];
+    setGeom({ ssd: p.ssd, depth: p.depth, fx: p.fx, fy: p.fx, gantry: 0, coll: 0, couch: 0, lat: 0, lng: 0, mu: 100 });
+    while (interlock() === "Machine is still moving") await sleep(50);
+    const r = interlock(); if (r) { toast(r); return false; }
+    if (!fast) await sleep(250);
+    for (let k = 0; k < 3; k++) {
+      await beamOn(100, fast ? 90 : 650);
+      RES[id][i].r.push(readDose({ mu: 100, x: 0, y: 0 }));
+      renderTask(id);
+    }
+  }
+  if (id === 5) renderTask(6);
+  return true;
+}
+function taskTSV(id) {
+  const rows = rowsFor(id);
+  return rows.map(({ r }) => [0, 1, 2].map((k) => r[k] !== undefined ? r[k].toFixed(2) : "").join("\t")).join("\n");
+}
+function allTSV() {
+  const out = [];
+  TASKS.forEach((t) => { if (!t.points.length) return; out.push(`Task ${t.id}: ${t.title} (simulated practice data)`); out.push(["Point", "R1", "R2", "R3"].join("\t"));
+    rowsFor(t.id).forEach(({ p, r }) => out.push([p.label, ...[0, 1, 2].map((k) => r[k] !== undefined ? r[k].toFixed(2) : "")].join("\t"))); out.push(""); });
+  return out.join("\n");
+}
+
+/* ============================== electrometer ============================== */
+const EL = { V: 300, pol: 1, M1: NaN, M2: NaN, Mm: NaN };
+function pressureMbar() { const v = +$("eP").value, u = $("ePU").value; return u === "kPa" ? v * 10 : u === "mmHg" ? v * 1.33322 : v; }
+function renderElec() {
+  const T = +$("eT").value, P = pressureMbar(), CF = +$("eCF").value, pion = +$("bPion").value;
+  const k = Beam.kTP(T, P);
+  const note = $("eUnitNote");
+  if ($("ePU").value === "mmHg" && +$("eP").value > 900) { note.hidden = false; note.textContent = `${$("eP").value} mmHg = ${P.toFixed(0)} mbar — far above any real air pressure. The lab script's "(mmHg)" is a typo: 1018 is in mbar. Switch the unit to mbar.`; }
+  else note.hidden = true;
+  const ks = (!Number.isNaN(EL.M1) && !Number.isNaN(EL.M2)) ? Beam.ksTwoVoltage(EL.M1, EL.M2) : NaN;
+  const kpol = (!Number.isNaN(EL.M1) && !Number.isNaN(EL.Mm)) ? (Math.abs(EL.M1) + Math.abs(EL.Mm)) / (2 * Math.abs(EL.M1)) : NaN;
+  const dScript = EL.M1 * CF * pion * k;
+  const dTRS = EL.M1 * k * (Number.isNaN(ks) ? 1 : ks) * (Number.isNaN(kpol) ? 1 : kpol) * CF;
+  $("eCorr").innerHTML = `<dt>k<sub>TP</sub> = (273.15 + T)/293.15 × 1013.25/P</dt><dd class="em">${k.toFixed(5)}</dd>
+    <dt>k<sub>s</sub> (two-voltage, TRS-398 pulsed)</dt><dd>${fx(ks, 5)}</dd>
+    <dt>k<sub>pol</sub> = (|M₊| + |M₋|) / 2|M₊|</dt><dd>${fx(kpol, 5)}</dd>
+    <dt>Dose — script Eq. 1: M₁ × CF × P<sub>ion</sub> × k<sub>TP</sub></dt><dd class="em">${fx(dScript, 2)} cGy</dd>
+    <dt>Dose — TRS-398: M₁ × k<sub>TP</sub> × k<sub>s</sub> × k<sub>pol</sub> × CF</dt><dd>${fx(dTRS, 2)} cGy</dd>
+    <dt>True dose in the simulation</dt><dd>${fx(EL.trueDose, 2)} cGy</dd>`;
+  const D = +$("bDose").value, F = CF * pion * k;
+  $("bOut").innerHTML = `<dt>Temperature factor</dt><dd>${((273.15 + T) / 293.15).toFixed(5)}</dd><dt>Pressure factor</dt><dd>${(1013.25 / P).toFixed(5)}</dd><dt>k<sub>TP</sub></dt><dd>${k.toFixed(4)}</dd><dt>CF × P<sub>ion</sub> × k<sub>TP</sub></dt><dd>${F.toFixed(4)} cGy/nC</dd><dt>R = Dose ÷ F</dt><dd class="em">${fx(D / F, 2)} nC</dd>`;
+  $("eSetup").textContent = `Current set-up: ${Beam.E[st.energy].label}, ${st.fx}×${st.fy} cm, SSD ${st.ssd} cm, depth ${st.depth} cm, Farmer chamber.`;
+  $("eLcdMode").textContent = `ELECTROMETER · ${EL.pol > 0 ? "+" : "−"}${EL.V} V · INTEGRATE`;
+  renderTask(6);
+}
+async function elecMeasure(V = EL.V, pol = EL.pol) {
+  const r = interlock(); if (r) { toast(r); return null; }
+  EL.V = V; EL.pol = pol; segSync();
+  await beamOn(st.mu, 1100);
+  const dose = readDose({ detector: "farmer", quiet: true });
+  const M = Beam.chargeReading({ energy: st.energy, dose, T: +$("eT").value, P: pressureMbar(), CF: +$("eCF").value, voltage: V, polarity: pol, noise: st.noise ? 0.0001 : 0 });
+  const shown = pol > 0 ? M : -M;
+  $("eLcd").textContent = shown.toFixed(3) + " nC";
+  if (V === 300 && pol > 0) { EL.M1 = M; EL.trueDose = dose; $("eM1").textContent = M.toFixed(3) + " nC"; }
+  if (V === 150 && pol > 0) { EL.M2 = M; $("eM2").textContent = M.toFixed(3) + " nC"; }
+  if (V === 300 && pol < 0) { EL.Mm = -M; $("eMm").textContent = (-M).toFixed(3) + " nC"; }
+  renderElec(); return M;
+}
+function segSync() {
+  qsa("#eV button").forEach((b) => b.classList.toggle("on", +b.dataset.v === EL.V));
+  qsa("#ePol button").forEach((b) => b.classList.toggle("on", +b.dataset.p === EL.pol));
+}
+
+/* ============================== linac console ============================== */
+const CONSOLE = [
+  ["Gantry angle (°)", "gantry"], ["Collimator angle (°)", "coll"], ["Couch rotation (°)", "couch"],
+  ["Diaphragm Y2 (cm)", "y2"], ["Diaphragm Y1 (cm)", "y1"], ["Diaphragm X2 (cm)", "x2"], ["Diaphragm X1 (cm)", "x1"],
+  ["Table vertical (cm)", "vert"], ["Table lateral (cm)", "lat"], ["Table longitudinal (cm)", "lng"], ["Monitor units", "mu"], ["Energy", "energy"],
+];
+function consoleVal(k, actual) {
+  switch (k) {
+    case "gantry": case "coll": case "couch": return (actual ? st.act[k] : st[k]).toFixed(1);
+    case "y2": return (st.fy / 2).toFixed(1); case "y1": return (-st.fy / 2).toFixed(1);
+    case "x2": return (st.fx / 2).toFixed(1); case "x1": return (-st.fx / 2).toFixed(1);
+    case "vert": return couchTopY().toFixed(1); case "lat": return st.lat.toFixed(1); case "lng": return st.lng.toFixed(1);
+    case "mu": return String(st.mu); case "energy": return Beam.E[st.energy].label;
+  }
+}
+function renderConsole(onlyActual) {
+  const tb = qs("#consoleTbl tbody");
+  if (!onlyActual || !tb.children.length) {
+    tb.innerHTML = CONSOLE.map(([lab, k]) => `<tr><td>${lab}</td><td>${k === "energy" ? `<select id="k_${k}" class="mono"><option value="6MV">6 MV</option><option value="10MV">10 MV</option></select>` : `<input id="k_${k}" type="number" step="${k === "mu" ? 1 : 0.5}" value="${consoleVal(k)}">`}</td><td class="act mono" id="a_${k}">${consoleVal(k, true)}</td></tr>`).join("");
+    $("k_energy").value = st.energy;
+    CONSOLE.forEach(([, k]) => { $("k_" + k).addEventListener("change", (e) => consoleSet(k, e.target.value)); });
+    if (st.vert) { ["y1", "y2", "x1", "mu"].forEach((k) => { $("k_" + k).disabled = true; }); }
+  } else {
+    CONSOLE.forEach(([, k]) => { const a = $("a_" + k); if (a) a.textContent = consoleVal(k, true); const i = $("k_" + k); if (i && document.activeElement !== i) i.value = k === "energy" ? st.energy : consoleVal(k); });
+  }
+  const r = interlock();
+  $("statusbar").innerHTML = `<div class="${r ? "st-amber" : "st-green"}">${r ? "Preparatory" : "Ready"}</div><div class="st-green">Room door closed</div><div class="${r ? "st-red" : "st-green"}">${r ? (r.split(" — ")[0].split(":")[0]) : "All interlocks on"}</div>`;
+}
+function consoleSet(k, v) {
+  v = k === "energy" ? v : +v;
+  if (k === "energy") return setGeom({ energy: v });
+  if (["gantry", "coll", "couch", "lat", "lng"].includes(k)) return setGeom({ [k]: v });
+  if (k === "x2" || k === "x1") return setGeom({ fx: Math.abs(v) * 2, fy: st.vert ? Math.abs(v) * 2 : st.fy });
+  if (k === "y2" || k === "y1") return setGeom({ fy: Math.abs(v) * 2 });
+  if (k === "vert") return setGeom({ ssd: 100 - (v + 40.5) });
+  if (k === "mu") return setGeom({ mu: v });
+}
+
+/* ============================== wiring ============================== */
+function wire() {
+  // tabs
+  qsa(".tab").forEach((b) => b.addEventListener("click", () => {
+    qsa(".tab").forEach((x) => x.setAttribute("aria-selected", String(x === b)));
+    qsa(".page").forEach((p) => { p.hidden = p.dataset.page !== b.dataset.tab; });
+    if (b.dataset.tab === "scanner") { ensureScanChart(); scanChart && scanChart.resize(); }
+    if (b.dataset.tab === "tasks") Object.values(taskCharts).forEach((c) => c.resize());
+    if (b.dataset.tab === "elec") renderElec();
+    if (b.dataset.tab === "linac") renderConsole(false);
+    try { localStorage.setItem("vll-tab", b.dataset.tab); } catch (e) { /* storage unavailable */ }
+  }));
+  qsa("#views .chip").forEach((b) => b.addEventListener("click", () => setView(b.dataset.view)));
+  const tog = (id, key, after) => $(id).addEventListener("click", () => { st[key] = !st[key]; $(id).classList.toggle("active", st[key]); $(id).setAttribute("aria-pressed", String(st[key])); after && after(); rebuildScene(); });
+  tog("tWash", "wash", () => applyMotion()); tog("tLaser", "lasers"); tog("tLight", "light");
+  // chamber inputs
+  $("cEnergy").addEventListener("change", (e) => setGeom({ energy: e.target.value }));
+  $("cDet").addEventListener("change", (e) => setGeom({ detector: e.target.value }));
+  $("cFx").addEventListener("change", (e) => setGeom({ fx: e.target.value }));
+  $("cFy").addEventListener("change", (e) => setGeom({ fy: e.target.value }));
+  $("cSSD").addEventListener("change", (e) => setGeom({ ssd: e.target.value }));
+  $("cDepth").addEventListener("change", (e) => setGeom({ depth: e.target.value }));
+  $("cMU").addEventListener("change", (e) => setGeom({ mu: e.target.value }));
+  $("depthPresets").innerHTML = [1.5, 2, 2.8, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20].map((d) => `<button class="chip" data-d="${d}">${d}</button>`).join("");
+  qsa("#depthPresets .chip").forEach((b) => b.addEventListener("click", () => setGeom({ depth: +b.dataset.d })));
+  const SET = { cal: { ssd: 95, depth: 5, fx: 10 }, tpr10: { ssd: 90, depth: 10, fx: 10 }, tpr20: { ssd: 80, depth: 20, fx: 10 }, dmax: { ssd: 100, depth: 1.5, fx: 10 } };
+  qsa("#setupPresets .chip").forEach((b) => b.addEventListener("click", () => { const s = SET[b.dataset.setup]; setGeom({ ...s, fy: s.fx, depth: b.dataset.setup === "dmax" ? Beam.E[st.energy].dm : s.depth }); setView("close"); }));
+  $("beamBtn").addEventListener("click", chamberMeasure);
+  $("copyLog").addEventListener("click", () => copyText(["#\tEnergy\tField (cm)\tSSD (cm)\tDepth (cm)\tDetector\tDose (cGy)", ...log.map((r, i) => [i + 1, r.energy, r.fld, r.ssd, r.depth, r.det, r.dose.toFixed(2)].join("\t"))].join("\n"), "Log copied"));
+  $("clearLog").addEventListener("click", () => { log.length = 0; renderLog(); refreshStats(); });
+  // scanner
+  qsa('input[name="scanType"]').forEach((r) => r.addEventListener("change", () => { const p = scanType() === "pdd"; $("pddOpts").hidden = !p; $("profOpts").hidden = p; }));
+  $("scanBtn").addEventListener("click", runScan);
+  $("scanReset").addEventListener("click", () => { series.length = 0; drawScan(); renderScanTable(); });
+  $("scanCopy").addEventListener("click", () => { const t = scanTSV(); if (!t) { toast("Nothing to copy yet — run a scan"); return; } copyText(t, "Scan data copied"); });
+  $("sNorm").addEventListener("change", drawScan);
+  $("sFy").disabled = st.vert;
+  $("sFx").addEventListener("change", () => { if (st.vert) $("sFy").value = $("sFx").value; });
+  // tasks
+  buildTasks();
+  $("taskList").addEventListener("click", async (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.setupTask) { const t = TASKS[+b.dataset.setupTask - 1]; const p = t.points[0]; setGeom({ ssd: p.ssd, depth: p.depth, fx: p.fx, fy: p.fx, gantry: 0, coll: 0, couch: 0, lat: 0, lng: 0 }); setView("close"); }
+    if (b.dataset.runTask) { if (st.busy) return; st.busy = true; lockRun(true); await runTask(+b.dataset.runTask, $("fastRun").checked); st.busy = false; lockRun(false); }
+    if (b.dataset.copyTask) { const id = +b.dataset.copyTask; if (!rowsFor(id).some((q) => q.r.length)) { toast("Run the task first"); return; } copyText(taskTSV(id), `Task ${id} readings copied (rows in workbook order)`); }
+  });
+  $("runAll").addEventListener("click", async () => {
+    if (st.busy) return; st.busy = true; lockRun(true); setView("close");
+    for (const id of [1, 2, 3, 4, 5]) { const ok = await runTask(id, $("fastRun").checked); if (ok === false) break; }
+    renderTask(6); $("task6").open = true; st.busy = false; lockRun(false); toast("Full lab complete — six tasks done", true);
+  });
+  $("copyAll").addEventListener("click", () => copyText(allTSV(), "All task readings copied"));
+  // electrometer
+  ["eT", "eP", "ePU", "eCF", "bDose", "bPion"].forEach((id) => $(id).addEventListener("input", renderElec));
+  qsa("#eV button").forEach((b) => b.addEventListener("click", () => { EL.V = +b.dataset.v; segSync(); renderElec(); }));
+  qsa("#ePol button").forEach((b) => b.addEventListener("click", () => { EL.pol = +b.dataset.p; segSync(); renderElec(); }));
+  const ESET = { cal: { ssd: 95, depth: 5, fx: 10, fy: 10 }, tpr10: { ssd: 90, depth: 10, fx: 10, fy: 10 }, tpr20: { ssd: 80, depth: 20, fx: 10, fy: 10 } };
+  qsa("[data-eset]").forEach((b) => b.addEventListener("click", () => { if (ESET[b.dataset.eset]) setGeom(ESET[b.dataset.eset]); EL.M1 = EL.M2 = EL.Mm = NaN; ["eM1", "eM2", "eMm"].forEach((i) => { $(i).textContent = "—"; }); renderElec(); }));
+  $("eMeasure").addEventListener("click", async () => { if (st.busy) return; st.busy = true; await elecMeasure(); st.busy = false; });
+  $("eAuto").addEventListener("click", async () => { if (st.busy) return; st.busy = true; for (const [V, p] of [[300, 1], [150, 1], [300, -1]]) { if (await elecMeasure(V, p) === null) break; } EL.V = 300; EL.pol = 1; segSync(); if (!Number.isNaN(EL.M1)) $("eLcd").textContent = EL.M1.toFixed(3) + " nC"; renderElec(); st.busy = false; });
+  $("bD10").addEventListener("click", () => { if ($("bD10").dataset.v) { $("bDose").value = $("bD10").dataset.v; renderElec(); } else toast("Run Task 5 first"); });
+  $("bD20").addEventListener("click", () => { if ($("bD20").dataset.v) { $("bDose").value = $("bD20").dataset.v; renderElec(); } else toast("Run Task 5 first"); });
+  // linac settings
+  $("optVert").addEventListener("change", (e) => { st.vert = e.target.checked; if (st.vert) { st.mu = 100; st.fy = st.fx; } $("sFy").disabled = st.vert; renderConsole(false); setGeom({}); });
+  $("optNoise").addEventListener("change", (e) => { st.noise = e.target.checked ? 0.0015 : 0; });
+  $("resetCal").addEventListener("click", () => { setGeom({ energy: "6MV", ssd: 95, depth: 5, fx: 10, fy: 10, gantry: 0, coll: 0, couch: 0, lat: 0, lng: 0, mu: 100 }); renderConsole(false); toast("Calibration set-up: SSD 95 cm, depth 5 cm, 10 × 10 cm", true); });
+  window.addEventListener("keydown", (e) => { if (e.code === "Space" && e.target === document.body) { e.preventDefault(); chamberMeasure(); } });
+}
+function lockRun(on) { qsa("[data-run-task], #runAll").forEach((b) => { b.disabled = on; }); $("beamBtn").disabled = on; }
+
+/* ============================== boot ============================== */
+wire();
+init3D();
+setGeom({});
+renderConsole(false); renderElec(); renderScanTable(); renderLog();
+try { const t = localStorage.getItem("vll-tab"); if (t) { const b = qs(`.tab[data-tab="${t}"]`); b && b.click(); } } catch (e) { /* storage unavailable */ }
+// Example state so the first view shows what the tool does: one calibration reading.
+(async () => { await sleep(600); if (!log.length) { const d = readDose(); log.push({ key: setupKey(), energy: "6 MV", fld: "10 × 10", ssd: 95, depth: 5, det: "farmer", dose: d });
+  $("doseBig").innerHTML = (d / 100).toFixed(3) + "<small>Gy</small>"; $("doseSub").textContent = d.toFixed(2) + " cGy · example reading at the calibration set-up"; renderLog(); refreshStats(); } })();
+
+</script>
+
+</body>
+</html>
